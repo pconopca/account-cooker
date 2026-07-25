@@ -27,7 +27,7 @@ These are checked on chain and proven by the negative cases in
 | Payouts are exchangeable | one uniform denomination per round | `settle` pays `denomination` to every recipient |
 | The set is full before it leaks | payouts refused until deposits complete | scenario 2, error `0x6` |
 | The set is real | payouts refused below the distinct-depositor floor | scenario 3, error `0x7` |
-| No value is created | payouts capped at deposits taken in | `authorize_payouts`, and the round account holding exactly rent afterwards |
+| No value is created | the round settles its full capacity exactly once, or not at all | `authorize_payouts`, and the round account holding exactly rent afterwards |
 | The set cannot be diluted after the fact | deposits refused once settlement starts | `RoundSettling` |
 | Only the coordinator may settle | settler must equal the round's authority | scenario 4, error `0xe` |
 | The coordinator cannot choose where the money goes | recipient set committed before the first deposit | scenario 5, error `0xf` |
@@ -97,8 +97,8 @@ mitigation is compatible with this design and is not implemented here.
 
 A single operator pooling with itself gets an effective `k` of exactly 1. This
 is not a limitation to be engineered away; it is what anonymity sets *are*.
-Pooling requires a crowd. The protocol makes the crowd cheap to form and refuses
-to pretend when it has not formed.
+Pooling requires a crowd. What the protocol can do is refuse to pretend when one
+has not formed, and it does.
 
 Locked in `a_lone_operator_cannot_reach_k_above_one`, and enforced on chain by
 scenario 3.
@@ -123,8 +123,31 @@ scenario 3.
 
 The mainnet figures come from contiguous block windows. An account funded before
 the window appears to have no funder; a busy account's depositor set is truncated
-to that window. The bias is one-directional — it can only understate depositor
+to that window. That bias is one-directional — it can only understate depositor
 counts — so every reported anonymity figure is a lower bound.
+
+**A second limit runs the other way, and it is the sharper one.** The extractor
+reads parsed system-program instructions. A program that owns an account can move
+its lamports directly, producing no instruction to parse, and those transfers are
+invisible here. The measurement therefore describes wallets funded *by system
+instructions*, not all funded wallets.
+
+The direction matters. Program-mediated payouts are disproportionately the
+pooled kind — the very provenance breaks this work is about — so missing them
+understates how much pooling exists. And a wallet paid by both a system transfer
+and a program payout reads as single-funder when it is not, which inflates the
+headline share rather than deflating it.
+
+This is not hypothetical: **the settlement transactions produced by this
+repository's own program are invisible to its own extractor.** Lamports move by
+direct mutation inside `settle`, so the devnet proof in [`PROOF.md`](PROOF.md)
+contains no parsed system instruction at all. A fleet funded through
+provenance-mesh would not be detected by provenance-mainnet.
+
+Attributing direct lamport mutations means reading pre/post balances and
+guessing which decrease paid which increase, which is ambiguous whenever more
+than one account moves. Rather than ship a heuristic that cannot be validated,
+the gap is stated.
 
 Two independent 300-slot windows are reported rather than one. The population
 share differs between them (88.8% and 87.5% at effective k = 1), so no single

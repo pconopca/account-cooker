@@ -160,11 +160,19 @@ wallet's funding arrived through it. Covered by
 `several_funders_widen_the_candidate_set_rather_than_collapsing_it` and
 `a_multi_funder_wallet_inherits_every_crowd_it_was_paid_from`.
 
-**Measurement caveat.** A block window can only ever understate an account's
+**Measurement caveats.** A block window can only ever understate an account's
 depositor count, so every anonymity figure is a lower bound. The breakage test
 inherits that bias in one direction, which is why it is paired with the
 recipient-signed test, decided inside a single transaction and immune to window
 length.
+
+Separately, the extractor reads parsed system instructions and cannot see a
+program moving lamports by direct mutation. That includes this program's own
+settlements — the transactions in section 2 contain no parsed system instruction
+— so a fleet funded through provenance-mesh would be invisible to
+provenance-mainnet. Since program-mediated payouts skew pooled, this understates
+how much pooling exists, and a wallet paid by both routes reads as single-funder
+when it is not. Full treatment in [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 ## 4. Test suite
 

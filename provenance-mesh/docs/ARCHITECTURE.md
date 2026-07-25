@@ -157,11 +157,19 @@ paid by a crowd. Transactions are requested in JSON-RPC batches to keep
 round-trips down, since the public endpoint rate-limits hard enough that a
 naive per-signature loop does not finish.
 
-Its window measurements are bounded by the window: an account funded before the window
-appears unfunded, and a busy account's depositor set is truncated. The bias is
-one-directional and every figure is therefore a lower bound. Two independent
-windows are sampled rather than one, because window *position* moves the
-population shares considerably more than window *size* does.
+Its window measurements are bounded by the window: an account funded before it
+appears unfunded, and a busy account's depositor set is truncated. That bias runs
+one way, so every figure is a lower bound. Two independent windows are sampled
+rather than one, because window *position* moves the population shares
+considerably more than window *size* does.
+
+What it cannot see at all is a program moving lamports by direct mutation, which
+produces no instruction to parse. That includes this workspace's own `settle`:
+the devnet proof transactions contain no parsed system instruction, so a fleet
+funded through provenance-mesh would be invisible to provenance-mainnet.
+Attributing raw balance deltas means guessing which decrease paid which increase,
+ambiguous as soon as more than one account moves, so the gap is documented rather
+than papered over with a heuristic. See `THREAT_MODEL.md`.
 
 ## `provenance-e2e`
 

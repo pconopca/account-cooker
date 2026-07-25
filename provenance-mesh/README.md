@@ -345,6 +345,11 @@ See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full treatment. In sh
   roughly sixty recipients.
 - **It stops at the chain boundary.** Correlated IPs or RPC metadata defeat all
   of it.
+- **The measurement cannot see program-mediated transfers.** It reads parsed
+  system instructions; a program moving lamports by direct mutation produces
+  none. That includes this workspace's own settlement, so a fleet funded through
+  provenance-mesh would be invisible to provenance-mainnet. The gap and its
+  direction are in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 ## Licence
 
