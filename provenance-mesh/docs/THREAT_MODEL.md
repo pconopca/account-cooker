@@ -127,10 +127,10 @@ to that window. The bias is one-directional — it can only understate depositor
 counts — so every reported anonymity figure is a lower bound.
 
 Two independent 300-slot windows are reported rather than one. The population
-share differs between them (84.7% and 81.3% at effective k = 1), so no single
+share differs between them (88.8% and 87.5% at effective k = 1), so no single
 window should be read as a population statistic. Two figures are stable across
 both: the share of accounts with exactly one funder that was itself paid by
-nobody (70.8% and 71.8%), and the mean effective k of wallets a star-shaped
+nobody (72.9% and 73.8%), and the mean effective k of wallets a star-shaped
 funder solely paid (1.00 in both). Those are what the argument rests on.
 
 The synthetic topologies were written by the same author as the attacks. That

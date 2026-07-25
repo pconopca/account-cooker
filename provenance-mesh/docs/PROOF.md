@@ -104,20 +104,20 @@ Two independent 300-slot windows, both committed:
 
 | | window A | window B |
 |---|---|---|
-| slots returned | 300/300 | 300/300 |
-| transfers extracted (top-level + CPI) | 60,268 | 72,080 |
-| funded accounts | 20,171 | 22,186 |
-| exactly one funder, itself paid by nobody | 14,280 (70.8%) | 15,930 (71.8%) |
-| effective anonymity set of 1 | 84.7% | 81.3% |
-| wallets solely funded by a star | 3,631 | 4,325 |
+| slots returned | 300/300 | 299/300 |
+| lamport-moving system instructions extracted | 117,265 | 120,021 |
+| funded accounts | 42,883 | 35,190 |
+| exactly one funder, itself paid by nobody | 31,251 (72.9%) | 25,956 (73.8%) |
+| effective anonymity set of 1 | 88.8% | 87.5% |
+| wallets solely funded by a star | 14,011 | 11,400 |
 | **their mean effective k** | **1.00** | **1.00** |
-| wallets solely funded by a pool | 1,625 | 2,805 |
-| their mean effective k | 31.19 | 1,137.99 |
-| pooled accounts that break the deposit-to-payout link | 34 of 42 | 35 of 40 |
+| wallets solely funded by a pool | 2,617 | 2,492 |
+| their mean effective k | 45.07 | 119.62 |
+| pooled accounts that break the deposit-to-payout link | 33 of 43 | 31 of 40 |
 
-**30,210 accounts across both windows were paid by exactly one account that was
+**57,207 accounts across both windows were paid by exactly one account that was
 itself paid by nobody.** That figure needs no entropy model: it is read directly
-off the graph. The entropy-based measure agrees and is slightly softer.
+off the graph.
 
 ```bash
 cargo run -p provenance-mainnet -- report window-a
@@ -127,23 +127,33 @@ cargo run -p provenance-mainnet -- report window-b
 Both reproduce from `data/window-a.json` and `data/window-b.json` in this
 repository. Re-sampling is `cargo run -p provenance-mainnet -- fetch 300 <name>`.
 
-A 40-slot sample is kept at `data/window-40slot.json` for comparing window
-*size* against window *position*: widening a window moves the population share
-far less than moving it does.
+### Two measurement errors this audit found, and what they cost
 
-### A measurement error this audit found, and what it cost
+**The extractor was reading a third of the graph.** It matched only `transfer`
+and `transferWithSeed`, and ignored `createAccount` — which moves lamports into
+a brand-new account, and is therefore how a fresh wallet comes into existence.
+Fresh wallets are precisely what a fleet consists of. Measured over six mainnet
+blocks: 854 lamport-moving system instructions ignored against 1,310 captured.
+`createAccountWithSeed` and `withdrawNonceAccount` were missing for the same
+reason.
 
-`provenance_posterior` originally returned a point mass for any wallet with more
-than one funder — recording the strongest possible claim about roughly 5% of
-accounts, while the comment directly above it said it made no claim. The two
-disagreed and the comment was right.
+Re-sampling with the gap closed nearly doubled both graphs — 60,268 → 117,265
+and 72,080 → 120,021 edges — and the conclusions strengthened rather than
+weakened. Agreement between the two independent windows on the structural
+measure tightened from 70.8%/71.8% to 72.9%/73.8%.
 
-The effect was not cosmetic. It inflated the population share from 84.7%/81.3%
-to 90.8%/86.4%, and it manufactured the invariant an earlier version of this
-work led with: "every wallet funded by a star sits at exactly 1.00" held only
-because multi-funder wallets had been forced there. Restricted to wallets a star
-*solely* funded, it survives honestly — 1.00 in both windows, over 7,956 wallets
-rather than 27,015.
+Covered by `account_creation_is_a_funding_edge`,
+`seeded_creation_and_nonce_withdrawal_are_edges_too` and
+`a_zero_lamport_creation_funds_nothing`.
+
+**The anonymity measure inflated its own headline.** `provenance_posterior`
+returned a point mass for any wallet with more than one funder — recording the
+strongest possible claim about roughly 5% of accounts, while the comment
+directly above it said it made no claim. That inflated the population share and
+manufactured the invariant an earlier version of this work led with: "every
+wallet funded by a star sits at exactly 1.00" held only because multi-funder
+wallets had been forced there. Restricted to wallets a star *solely* funded, it
+survives honestly.
 
 Each funder now contributes its own candidate set, weighted by how much of the
 wallet's funding arrived through it. Covered by

@@ -40,50 +40,57 @@ Every number below reproduces from those bytes, not from live network state.
 
 | | window A | window B |
 |---|---|---|
-| transfers | 60,268 | 72,080 |
-| funded accounts | 20,171 | 22,186 |
-| **exactly one funder, itself paid by nobody** | **14,280 (70.8%)** | **15,930 (71.8%)** |
-| effective anonymity set of 1 | 84.7% | 81.3% |
-| star-shaped funding clusters | 1,746 | 1,412 |
-| wallets *solely* funded by a star | 3,631 | 4,325 |
+| transfers | 117,265 | 120,021 |
+| funded accounts | 42,883 | 35,190 |
+| **exactly one funder, itself paid by nobody** | **31,251 (72.9%)** | **25,956 (73.8%)** |
+| effective anonymity set of 1 | 88.8% | 87.5% |
+| star-shaped funding clusters | 2,410 | 2,613 |
+| wallets *solely* funded by a star | 14,011 | 11,400 |
 | **their mean effective k** | **1.00** | **1.00** |
-| pooled clusters | 142 | 87 |
-| wallets solely funded by a pool | 1,625 | 2,805 |
-| their mean effective k | 31.19 | 1,137.99 |
+| pooled clusters | 138 | 164 |
+| wallets solely funded by a pool | 2,617 | 2,492 |
+| their mean effective k | 45.07 | 119.62 |
 
-**30,210 accounts across the two windows were paid by exactly one account that
-was itself paid by nobody.** 70.8% and 71.8% — a single identifiable origin,
+**57,207 accounts across the two windows were paid by exactly one account that
+was itself paid by nobody.** 72.9% and 73.8% — a single identifiable origin,
 established by inspection rather than inferred from a model.
 
-The entropy-based reading agrees and is slightly softer: 84.7% and 81.3% sit at
-an effective anonymity set of 1 once every funder's crowd is accounted for.
+The entropy-based reading agrees: 88.8% and 87.5% sit at an effective anonymity
+set of 1 once every funder's crowd is accounted for.
 
 A star-shaped funder pays many accounts while being paid by almost none. Wallets
-whose *only* funder is such an account measure at exactly 1.00 in both windows.
-Wallets whose only funder is a pooled account measure at 31.19 and 1,137.99 —
-the spread reflecting that window B contained a pool with 1,638 depositors and
-window A did not.
+whose *only* funder is such an account measure at exactly 1.00 in both windows —
+25,411 of them. Wallets whose only funder is a pooled account measure at 45.07
+and 119.62.
 
 That contrast is the whole finding. Two accounts can fund the same number of
-wallets and hand them anonymity sets three orders of magnitude apart, decided
+wallets and hand them anonymity sets two orders of magnitude apart, decided
 entirely by whether the funder was itself paid by a crowd.
 
-**A correction, since an earlier version of this README claimed more.** The
-first implementation collapsed every multi-funder wallet to a point mass,
-recording the strongest possible claim about roughly 5% of accounts while its
-own comment said it made none. That inflated the population share and produced
-a cleaner-looking invariant than the data supports: "every wallet funded by a
-star sits at 1.00" was true only because wallets with several funders had been
-forced there. Restricted to wallets a star *solely* funded, the invariant holds
-honestly — and the population figure is 84.7%/81.3% rather than 90.8%/86.4%.
-The correction is in `provenance_posterior`, with two tests covering it.
+Behavioural noise cannot move any of this. The funding edge is recorded before
+the agent has behaved at all.
 
 Note what is *not* claimed: nothing identifies these clusters as bot fleets,
 airdrops, payroll, or anything else. Intent is not observable and none is
 imputed. What is observable is the shape, and the shape decides the privacy.
 
-Behavioural noise cannot move any of this. The funding edge is recorded before
-the agent has behaved at all.
+**Two corrections behind these numbers**, both found by auditing this repository
+and both documented rather than quietly applied.
+
+The extractor originally read only `transfer` and `transferWithSeed`, and missed
+`createAccount` entirely — which is how a fresh wallet comes into existence, and
+fresh wallets are exactly what a fleet is made of. Measured over six mainnet
+blocks, that was 854 lamport-moving instructions ignored against 1,310 captured.
+Re-sampling with the gap closed roughly doubled the graph, from 60,268 and
+72,080 edges to 117,265 and 120,021.
+
+The anonymity measure separately collapsed every multi-funder wallet to a point
+mass while its own comment claimed it made no assertion about them. That
+inflated the population share and manufactured a cleaner invariant than the data
+supported. Each funder now contributes its own candidate set.
+
+Both corrections moved the numbers and neither weakened the conclusion: window
+agreement on the structural measure tightened from 70.8/71.8 to 72.9/73.8.
 
 ### Working provenance breaks already exist — and every one has a gatekeeper
 
@@ -99,18 +106,19 @@ Testing every pooled account with 8 or more distinct depositors:
 
 | verdict | window A | window B |
 |---|---|---|
-| breaks the deposit-to-payout link | **34** of 42 | **35** of 40 |
-| passthrough — hides nothing | 4 | 2 |
-| partial | 4 | 3 |
+| breaks the deposit-to-payout link | **33** of 43 | **31** of 40 |
+| passthrough — hides nothing | 3 | 2 |
+| partial | 7 | 7 |
 
-The largest pool in window B had **1,638 depositors and 1,929 payouts, none signed
-by a depositor**.
+The largest pools run to well over a thousand depositors with no payout signed
+by any of them.
 
 That test is biased by window length — someone who deposited last week and
 withdrew today reads as a stranger — so it is paired with one that is not: whether
 the recipient signed its own payout, settled inside a single transaction and
-immune to how far back the window reaches. Only 6 of 42 and 5 of 40 pools are
-self-service; the largest sit at 0.00. The two measurements agree.
+immune to how far back the window reaches. Only a handful of pools in each
+window are self-service, and the largest sit at 0.00. The two measurements
+agree.
 
 **So provenance privacy on Solana is not impossible. It is routine, and it is
 locked behind an intermediary.** Every working pool here is custodial or mediated:
@@ -280,7 +288,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 80 tests
+cargo test --workspace                                   # 83 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings

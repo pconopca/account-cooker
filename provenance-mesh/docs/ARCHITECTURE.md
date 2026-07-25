@@ -133,9 +133,16 @@ found by a live run.
 
 ## `provenance-mainnet`
 
-Fetches `getBlock` with `jsonParsed`, extracts system-program transfers from both
-top-level and inner instructions, and records each transfer's fee payer. Failed
-transactions and self-transfers are excluded.
+Fetches `getBlock` with `jsonParsed` and extracts every system-program
+instruction that moves lamports — `transfer`, `transferWithSeed`,
+`createAccount`, `createAccountWithSeed`, `withdrawNonceAccount` — from both
+top-level and inner instructions, recording each one's fee payer. Failed
+transactions, self-transfers and zero-lamport creations are excluded.
+
+The instruction list is a table rather than a match arm because an earlier
+version matched only the two `transfer` variants and silently dropped roughly a
+third of the graph. Account creation is not an edge case here: it is how a fresh
+wallet comes into existence.
 
 Samples are written to `data/<name>.json` and committed, so the analysis
 reproduces from bytes in the repository rather than from live network state.
