@@ -25,7 +25,7 @@ pub use attack::{
     SharedAncestorIndicator,
 };
 pub use breakage::{measure as measure_breakage, Breakage};
-pub use evaluate::{evaluate, AttackResult};
+pub use evaluate::{evaluate, linked_share, with_observed_funding, AttackResult};
 pub use fleet::{scan as scan_fleets, Cluster, FunderShape, Scan};
 pub use metrics::{effective_set_size, min_entropy, roc_auc, shannon_entropy};
 pub use scenario::{generate, FleetSpec, FundingTopology, Scenario};

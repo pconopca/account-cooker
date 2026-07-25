@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use provenance_core::{FundingGraph, WalletId};
+
 use crate::attack::PairwiseAttack;
 use crate::metrics::roc_auc;
 use crate::scenario::Scenario;
@@ -131,5 +133,101 @@ mod tests {
                 "shared-ancestor-indicator"
             ]
         );
+    }
+}
+
+/// Wallets whose funding this graph actually shows.
+///
+/// Everything scored against a wallet set has to run over this, not the set the
+/// caller handed in. A wallet with no observed funder cannot score above zero
+/// against anything, so including it dilutes a linkage share downward and can
+/// turn a genuinely linkable fleet into a reassuring verdict. In a tool someone
+/// relies on for privacy, silence must not read as evidence of it.
+#[must_use]
+pub fn with_observed_funding(graph: &FundingGraph, wallets: &[WalletId]) -> Vec<WalletId> {
+    wallets
+        .iter()
+        .filter(|wallet| !graph.direct_funders(wallet).is_empty())
+        .cloned()
+        .collect()
+}
+
+/// Share of scorable pairs an attack links, ignoring wallets it cannot see.
+///
+/// Returns `None` when fewer than two wallets have observed funding, which is a
+/// different answer from zero.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn linked_share(
+    graph: &FundingGraph,
+    wallets: &[WalletId],
+    attack: &dyn PairwiseAttack,
+) -> Option<f64> {
+    let observed = with_observed_funding(graph, wallets);
+    if observed.len() < 2 {
+        return None;
+    }
+    let mut linked = 0_usize;
+    let mut pairs = 0_usize;
+    for (index, left) in observed.iter().enumerate() {
+        for right in &observed[index + 1..] {
+            pairs += 1;
+            if attack.score(graph, left, right) > 0.0 {
+                linked += 1;
+            }
+        }
+    }
+    Some(linked as f64 / pairs as f64)
+}
+
+#[cfg(test)]
+mod exclusion_tests {
+    use provenance_core::{FundingEdge, FundingGraph, WalletId};
+
+    use crate::attack::DirectFunderJaccard;
+
+    use super::{linked_share, with_observed_funding};
+
+    fn edge(source: &str, target: &str) -> FundingEdge {
+        FundingEdge {
+            source: source.into(),
+            target: target.into(),
+            lamports: 1,
+            slot: 1,
+            signers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn wallets_with_no_observed_funder_are_left_out() {
+        let graph = FundingGraph::from_edges(vec![edge("hot", "a"), edge("hot", "b")]);
+        let asked: Vec<WalletId> = vec!["a".into(), "b".into(), "never-seen".into()];
+        assert_eq!(
+            with_observed_funding(&graph, &asked),
+            vec![WalletId::from("a"), WalletId::from("b")]
+        );
+    }
+
+    #[test]
+    fn unseen_wallets_do_not_dilute_a_linkable_verdict() {
+        // Two wallets from one hot wallet, plus eight the history never showed.
+        // Counting the unseen ones as unlinked would report 2 of 45 pairs — 4%,
+        // comfortably below any threshold — for a fleet that is fully linked.
+        let graph = FundingGraph::from_edges(vec![edge("hot", "a"), edge("hot", "b")]);
+        let mut asked: Vec<WalletId> = vec!["a".into(), "b".into()];
+        for index in 0..8 {
+            asked.push(WalletId(format!("unseen-{index}")));
+        }
+        assert_eq!(
+            linked_share(&graph, &asked, &DirectFunderJaccard),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn too_little_observed_funding_is_not_an_answer_of_zero() {
+        let graph = FundingGraph::from_edges(vec![edge("hot", "a")]);
+        let asked: Vec<WalletId> = vec!["a".into(), "unseen".into()];
+        assert_eq!(linked_share(&graph, &asked, &DirectFunderJaccard), None);
     }
 }

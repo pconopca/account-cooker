@@ -307,9 +307,19 @@ fn print_wallet_provenance(
     (measure_anonymity(graph, wallets), unfunded)
 }
 
-/// Pairwise linkage table. Returns the strongest attack's hit rate.
+/// Pairwise linkage table over wallets whose funding was actually observed.
+///
+/// Wallets with no observed funder must not enter this: they cannot score above
+/// zero against anything, so counting them would dilute the linked share and
+/// could turn a genuinely linkable fleet into a reassuring verdict. Silence is
+/// not evidence of privacy.
 fn print_linkage(graph: &provenance_core::FundingGraph, wallets: &[WalletId]) -> f64 {
     println!("\n## Can an observer link these wallets to each other?\n");
+    println!(
+        "Scored over the {} wallets whose funding was observed. Pairs involving a wallet with no \
+         observed funder are excluded rather than counted as unlinked.\n",
+        wallets.len()
+    );
     println!("| attack | pairs scoring above zero | share |");
     println!("|---|---|---|");
 
@@ -344,9 +354,22 @@ fn print_linkage(graph: &provenance_core::FundingGraph, wallets: &[WalletId]) ->
     worst
 }
 
-fn print_verdict(worst: f64, report: &provenance_eval::anonymity::AnonymityReport) {
+fn print_verdict(
+    worst: f64,
+    report: &provenance_eval::anonymity::AnonymityReport,
+    observed: usize,
+    total: usize,
+) {
     println!("\n## Verdict\n");
-    if worst >= 0.5 {
+    // An audit that saw almost nothing has not found privacy; it has found
+    // nothing. Saying so is the whole point of a tool people rely on.
+    if observed * 2 < total {
+        println!(
+            "**Inconclusive.** Funding was observed for only {observed} of {total} wallets, so \
+             most of this set was not audited at all. Widen the history read per address before \
+             drawing any conclusion from what follows."
+        );
+    } else if worst >= 0.5 {
         println!(
             "**Linkable.** {:.0}% of wallet pairs share a funding ancestor an observer can see. \
              These addresses read as one operator.",
@@ -398,20 +421,35 @@ fn do_scan(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("# Provenance audit\n");
     println!("Wallets scanned: {}\n", wallets.len());
 
-    let (report, unfunded) = print_wallet_provenance(&graph, &wallets);
+    let (_, unfunded) = print_wallet_provenance(&graph, &wallets);
+
+    // Everything downstream is scored over wallets whose funding was actually
+    // observed. Including the rest would let an unread history masquerade as
+    // privacy in both the mean and the linkage share.
+    let observed = provenance_eval::evaluate::with_observed_funding(&graph, &wallets);
+    let report = measure_anonymity(&graph, &observed);
     println!(
-        "\n**Mean effective anonymity set: {:.2}** (min-entropy {:.2})",
-        report.mean_effective_k, report.mean_effective_k_min
+        "\n**Mean effective anonymity set: {:.2}** (min-entropy {:.2}), over the {} wallets whose \
+         funding was observed.",
+        report.mean_effective_k,
+        report.mean_effective_k_min,
+        observed.len()
     );
     if unfunded > 0 {
         println!(
-            "\n{unfunded} wallet(s) had no inbound transfer in recent history; they are excluded \
-             from the linkage test below rather than counted as private."
+            "\n{unfunded} wallet(s) had no inbound transfer in the history read. They are left out \
+             of every figure below — not counted as private, and not counted as attributable. \
+             Nothing was learned about them."
         );
     }
 
-    let worst = print_linkage(&graph, &wallets);
-    print_verdict(worst, &report);
+    let worst = if observed.len() >= 2 {
+        print_linkage(&graph, &observed)
+    } else {
+        println!("\nToo few wallets with observed funding to test linkage.");
+        0.0
+    };
+    print_verdict(worst, &report, observed.len(), wallets.len());
     Ok(())
 }
 

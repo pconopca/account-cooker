@@ -258,6 +258,12 @@ transactions per address, ancestors more than two hops back, and everything off
 chain. A clean result is evidence of nothing found, not proof of nothing there,
 and the tool says so rather than leaving the reader to assume otherwise.
 
+Wallets whose funding the history never showed are left out of every figure
+rather than scored as unlinked. Counting them would dilute the linked share and
+could turn a fully linkable fleet into a reassuring verdict; when most of a set
+goes unobserved the tool reports **inconclusive** instead of clean. In a tool
+someone leans on for privacy, silence must not read as evidence of it.
+
 ## Install
 
 Requires **Rust 1.89 or newer** — `solana-pubkey` sets that floor, and an older
@@ -286,7 +292,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 84 tests
+cargo test --workspace                                   # 87 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings

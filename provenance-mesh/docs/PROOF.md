@@ -177,10 +177,10 @@ scope entirely and equally invisible. Full treatment in
 ```
 $ cargo test --workspace
 provenance-core        9 passed
-provenance-eval       47 passed
+provenance-eval       50 passed
 provenance-program    16 passed
 provenance-mainnet    12 passed
-                      -- 84 total, 0 failed
+                      -- 87 total, 0 failed
 $ cargo clippy --workspace --all-targets -- -D warnings
 clean, with pedantic lints enabled workspace-wide
 ```
@@ -201,6 +201,8 @@ Tests that encode the honest limits rather than the happy path:
   reading two thirds of the graph
 - `several_funders_widen_the_candidate_set_rather_than_collapsing_it` — the
   measure must not claim certainty it does not have
+- `unseen_wallets_do_not_dilute_a_linkable_verdict` — an unread history must not
+  read as privacy
 
 ## 5. Two bugs the live run caught that unit tests could not
 
