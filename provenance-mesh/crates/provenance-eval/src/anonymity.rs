@@ -32,34 +32,54 @@ pub struct AnonymityReport {
     pub mean_effective_k_min: f64,
 }
 
-/// The observer's posterior over who funded `wallet`, as unnormalised weights.
+/// The observer's posterior over who ultimately paid for `wallet`, as
+/// unnormalised weights.
 ///
 /// A wallet paid directly by a root source yields a point mass: the observer is
 /// certain. A wallet paid by a pool yields the pool's deposit counts, since a
 /// payout is equally likely to belong to any deposit the pool received.
+///
+/// A wallet with several funders is not a special case and must not be treated
+/// as one. Each funder contributes its own candidate set, weighted by how much
+/// of this wallet's funding arrived through it. An earlier version returned a
+/// point mass here while its comment claimed to make no assertion — recording
+/// the strongest possible claim about roughly 5% of accounts it had declared
+/// out of scope. The two disagreed, and the comment was the honest one.
 fn provenance_posterior(graph: &FundingGraph, wallet: &WalletId) -> Vec<f64> {
     // Borrowed rather than cloned throughout: this runs once per wallet across
     // tens of thousands of wallets.
     let Some(funders) = graph.inbound_edge_counts_ref(wallet) else {
         return vec![1.0];
     };
-    if funders.len() != 1 {
-        // No funder, or an ambiguous multi-funder wallet we make no claim about.
+    if funders.is_empty() {
         return vec![1.0];
     }
-    let Some(funder) = funders.keys().next() else {
-        return vec![1.0];
-    };
 
-    let Some(counts) = graph.inbound_edge_counts_ref(funder) else {
-        // The funder is a root: it *is* the origin, and the observer knows it.
-        return vec![1.0];
-    };
-    if counts.is_empty() {
-        return vec![1.0];
+    let mut weights = Vec::new();
+    for (funder, arrivals) in funders {
+        #[allow(clippy::cast_precision_loss)]
+        let via = *arrivals as f64;
+        match graph.inbound_edge_counts_ref(funder) {
+            // The funder is a root within the observed window: it *is* the
+            // origin, and it accounts for this share of the wallet's funding.
+            None => weights.push(via),
+            Some(crowd) if crowd.is_empty() => weights.push(via),
+            Some(crowd) => {
+                #[allow(clippy::cast_precision_loss)]
+                let total: f64 = crowd.values().map(|count| *count as f64).sum();
+                if total <= 0.0 {
+                    weights.push(via);
+                    continue;
+                }
+                // Spread this funder's share across the crowd it hides among.
+                for count in crowd.values() {
+                    #[allow(clippy::cast_precision_loss)]
+                    weights.push(via * (*count as f64) / total);
+                }
+            }
+        }
     }
-    #[allow(clippy::cast_precision_loss)]
-    counts.values().map(|count| *count as f64).collect()
+    weights
 }
 
 /// Measure absolute provenance anonymity over `wallets`.
@@ -153,6 +173,58 @@ mod tests {
         let report = measure(&scenario.graph, &scenario.agents);
         assert!(
             (report.mean_effective_k - 1.0).abs() < 1e-12,
+            "got {}",
+            report.mean_effective_k
+        );
+    }
+
+    #[test]
+    fn several_funders_widen_the_candidate_set_rather_than_collapsing_it() {
+        use provenance_core::FundingEdge;
+
+        let edge = |source: &str, target: &str| FundingEdge {
+            source: source.into(),
+            target: target.into(),
+            lamports: 1,
+            slot: 1,
+            payer: None,
+        };
+        // One wallet paid by two roots. An observer knows it was one of two, so
+        // the effective set is 2 — not 1, which is what a point-mass shortcut
+        // would report.
+        let graph = provenance_core::FundingGraph::from_edges(vec![
+            edge("root-a", "wallet"),
+            edge("root-b", "wallet"),
+        ]);
+        let report = measure(&graph, &[WalletId::from("wallet")]);
+        assert!(
+            (report.mean_effective_k - 2.0).abs() < 1e-12,
+            "got {}",
+            report.mean_effective_k
+        );
+    }
+
+    #[test]
+    fn a_multi_funder_wallet_inherits_every_crowd_it_was_paid_from() {
+        use provenance_core::FundingEdge;
+
+        let edge = |source: &str, target: &str| FundingEdge {
+            source: source.into(),
+            target: target.into(),
+            lamports: 1,
+            slot: 1,
+            payer: None,
+        };
+        let mut edges = vec![edge("pool", "wallet"), edge("root", "wallet")];
+        for index in 0..8 {
+            edges.push(edge(&format!("depositor-{index}"), "pool"));
+        }
+        let graph = provenance_core::FundingGraph::from_edges(edges);
+        let report = measure(&graph, &[WalletId::from("wallet")]);
+        // Half the funding came through a crowd of eight, half from a known
+        // root: more uncertainty than the root alone, far less than the pool.
+        assert!(
+            report.mean_effective_k > 2.0 && report.mean_effective_k < 8.0,
             "got {}",
             report.mean_effective_k
         );

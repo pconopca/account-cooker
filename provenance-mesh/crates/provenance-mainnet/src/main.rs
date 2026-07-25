@@ -67,6 +67,70 @@ fn do_fetch(blocks: u64, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Population-level provenance anonymity across every funded account.
+fn print_population_anonymity(graph: &provenance_core::FundingGraph, funded: &[WalletId]) {
+    // Per-wallet effective anonymity set, read from the composition of its funder.
+    let mut effective: Vec<f64> = Vec::with_capacity(funded.len());
+    let mut effective_min: Vec<f64> = Vec::with_capacity(funded.len());
+    for wallet in funded {
+        let report = measure_anonymity(graph, std::slice::from_ref(wallet));
+        effective.push(report.mean_effective_k);
+        effective_min.push(report.mean_effective_k_min);
+    }
+    effective.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    effective_min.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let perfectly_attributable = effective.iter().filter(|k| **k < 1.000_001).count();
+    #[allow(clippy::cast_precision_loss)]
+    let share = perfectly_attributable as f64 / effective.len().max(1) as f64;
+
+    println!("## Effective provenance anonymity set, real accounts\n");
+    println!("| statistic | effective k | effective k (min-entropy) |");
+    println!("|---|---|---|");
+    for (label, fraction) in [
+        ("p50", 0.50),
+        ("p75", 0.75),
+        ("p90", 0.90),
+        ("p99", 0.99),
+        ("max", 1.00),
+    ] {
+        println!(
+            "| {} | {:.2} | {:.2} |",
+            label,
+            percentile(&effective, fraction),
+            percentile(&effective_min, fraction)
+        );
+    }
+    println!(
+        "\n**{:.1}% of funded accounts have an effective anonymity set of 1.**\n",
+        share * 100.0
+    );
+
+    // The structural version of the same question, which needs no entropy
+    // calculation and no modelling: how many accounts were paid by exactly one
+    // account that was itself paid by nobody? Those are unambiguous by
+    // inspection, not by inference.
+    let unambiguous = funded
+        .iter()
+        .filter(|wallet| {
+            let funders = graph.direct_funders(wallet);
+            funders.len() == 1
+                && funders
+                    .iter()
+                    .next()
+                    .is_some_and(|funder| graph.direct_funders(funder).is_empty())
+        })
+        .count();
+    #[allow(clippy::cast_precision_loss)]
+    let unambiguous_share = unambiguous as f64 / funded.len().max(1) as f64;
+    println!(
+        "**{unambiguous} accounts ({:.1}%) have exactly one funder, which was itself paid by \
+         nobody** - a single identifiable origin, established by inspection rather than \
+         inferred.\n",
+        unambiguous_share * 100.0
+    );
+}
+
 /// Star-funded clusters observed in the wild, and what their wallets inherit.
 fn report_fleets(graph: &provenance_core::FundingGraph) {
     const MIN_RECIPIENTS: usize = 5;
@@ -77,16 +141,25 @@ fn report_fleets(graph: &provenance_core::FundingGraph) {
         "Wallets that funded {MIN_RECIPIENTS} or more others inside the window, split by whether \
          anyone funded *them*.\n"
     );
-    println!("| shape | clusters | wallets funded | mean effective k of those wallets |");
+    println!("| shape | clusters | wallets solely funded by them | mean effective k |");
     println!("|---|---|---|---|");
 
     for (label, clusters) in [
         ("star (paid by <= 1)", scan.stars().collect::<Vec<_>>()),
         ("pool (paid by > 1)", scan.pools().collect::<Vec<_>>()),
     ] {
+        // Only wallets whose *sole* funder is this cluster. A wallet paid by
+        // several sources inherits all their crowds, so counting it here would
+        // attribute another funder's anonymity to this one.
         let recipients: Vec<WalletId> = clusters
             .iter()
-            .flat_map(|cluster| graph.direct_recipients(&cluster.funder))
+            .flat_map(|cluster| {
+                graph
+                    .direct_recipients(&cluster.funder)
+                    .into_iter()
+                    .filter(|wallet| graph.direct_funders(wallet).len() == 1)
+                    .collect::<Vec<_>>()
+            })
             .collect();
         let covered = recipients.len();
         let mean_k = if recipients.is_empty() {
@@ -349,43 +422,7 @@ fn do_report(name: &str) {
         funded.len()
     );
 
-    // Per-wallet effective anonymity set, read from the composition of its funder.
-    let mut effective: Vec<f64> = Vec::with_capacity(funded.len());
-    let mut effective_min: Vec<f64> = Vec::with_capacity(funded.len());
-    for wallet in &funded {
-        let report = measure_anonymity(&graph, std::slice::from_ref(wallet));
-        effective.push(report.mean_effective_k);
-        effective_min.push(report.mean_effective_k_min);
-    }
-    effective.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    effective_min.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let perfectly_attributable = effective.iter().filter(|k| **k < 1.000_001).count();
-    #[allow(clippy::cast_precision_loss)]
-    let share = perfectly_attributable as f64 / effective.len().max(1) as f64;
-
-    println!("## Effective provenance anonymity set, real accounts\n");
-    println!("| statistic | effective k | effective k (min-entropy) |");
-    println!("|---|---|---|");
-    for (label, fraction) in [
-        ("p50", 0.50),
-        ("p75", 0.75),
-        ("p90", 0.90),
-        ("p99", 0.99),
-        ("max", 1.00),
-    ] {
-        println!(
-            "| {} | {:.2} | {:.2} |",
-            label,
-            percentile(&effective, fraction),
-            percentile(&effective_min, fraction)
-        );
-    }
-    println!(
-        "\n**{:.1}% of funded accounts have an effective anonymity set of 1** \
-         - one identifiable funder, no ambiguity at all.\n",
-        share * 100.0
-    );
+    print_population_anonymity(&graph, &funded);
 
     // The other half of the story: accounts whose funder is a busy pool.
     let counts: BTreeMap<WalletId, usize> = funded

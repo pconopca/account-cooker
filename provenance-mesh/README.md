@@ -35,41 +35,55 @@ that integration is not written yet.
 
 ## The finding, on real mainnet data
 
-Two independent 300-slot mainnet windows, both committed to this repository. Every
-number below reproduces from those bytes, not from live network state.
+Two independent 300-slot mainnet windows, both committed to this repository.
+Every number below reproduces from those bytes, not from live network state.
 
 | | window A | window B |
 |---|---|---|
 | transfers | 60,268 | 72,080 |
 | funded accounts | 20,171 | 22,186 |
-| accounts at effective k = 1 | 90.8% | 86.4% |
+| **exactly one funder, itself paid by nobody** | **14,280 (70.8%)** | **15,930 (71.8%)** |
+| effective anonymity set of 1 | 84.7% | 81.3% |
 | star-shaped funding clusters | 1,746 | 1,412 |
-| wallets funded by a star | 14,342 | 12,673 |
-| **mean effective k of those wallets** | **1.00** | **1.00** |
+| wallets *solely* funded by a star | 3,631 | 4,325 |
+| **their mean effective k** | **1.00** | **1.00** |
 | pooled clusters | 142 | 87 |
-| wallets funded by a pool | 2,379 | 3,210 |
-| mean effective k of those wallets | 21.62 | 994.54 |
+| wallets solely funded by a pool | 1,625 | 2,805 |
+| their mean effective k | 31.19 | 1,137.99 |
 
-**27,015 wallets across the two windows sit at an effective provenance anonymity
-set of exactly 1.00.** One identifiable origin, no ambiguity. That figure is
-identical in both samples.
+**30,210 accounts across the two windows were paid by exactly one account that
+was itself paid by nobody.** 70.8% and 71.8% — a single identifiable origin,
+established by inspection rather than inferred from a model.
 
-A star-shaped funder pays many accounts while being paid by almost none. The
-largest observed paid 160 wallets in window A and 660 in window B, receiving from
-nobody in either case.
+The entropy-based reading agrees and is slightly softer: 84.7% and 81.3% sit at
+an effective anonymity set of 1 once every funder's crowd is accounted for.
 
-The numbers that *do* move are the population shares — 90.8% against 86.4% — and
-the anonymity that pools confer, which swung from 21.62 to 994.54 because window
-B happened to contain a pool with 1,638 depositors. Both windows are reported
-rather than the flattering one: what a window contains varies, the invariant does
-not.
+A star-shaped funder pays many accounts while being paid by almost none. Wallets
+whose *only* funder is such an account measure at exactly 1.00 in both windows.
+Wallets whose only funder is a pooled account measure at 31.19 and 1,137.99 —
+the spread reflecting that window B contained a pool with 1,638 depositors and
+window A did not.
+
+That contrast is the whole finding. Two accounts can fund the same number of
+wallets and hand them anonymity sets three orders of magnitude apart, decided
+entirely by whether the funder was itself paid by a crowd.
+
+**A correction, since an earlier version of this README claimed more.** The
+first implementation collapsed every multi-funder wallet to a point mass,
+recording the strongest possible claim about roughly 5% of accounts while its
+own comment said it made none. That inflated the population share and produced
+a cleaner-looking invariant than the data supports: "every wallet funded by a
+star sits at 1.00" was true only because wallets with several funders had been
+forced there. Restricted to wallets a star *solely* funded, the invariant holds
+honestly — and the population figure is 84.7%/81.3% rather than 90.8%/86.4%.
+The correction is in `provenance_posterior`, with two tests covering it.
 
 Note what is *not* claimed: nothing identifies these clusters as bot fleets,
-airdrops, payroll, or anything else. Intent is not observable and none is imputed.
-What is observable is the shape, and the shape decides the privacy.
+airdrops, payroll, or anything else. Intent is not observable and none is
+imputed. What is observable is the shape, and the shape decides the privacy.
 
-Behavioural noise cannot move any of this. The funding edge is recorded before the
-agent has behaved at all.
+Behavioural noise cannot move any of this. The funding edge is recorded before
+the agent has behaved at all.
 
 ### Working provenance breaks already exist — and every one has a gatekeeper
 
@@ -266,7 +280,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 78 tests
+cargo test --workspace                                   # 80 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings

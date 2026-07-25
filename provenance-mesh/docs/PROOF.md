@@ -107,15 +107,17 @@ Two independent 300-slot windows, both committed:
 | slots returned | 300/300 | 300/300 |
 | transfers extracted (top-level + CPI) | 60,268 | 72,080 |
 | funded accounts | 20,171 | 22,186 |
-| accounts at effective k = 1 | 90.8% | 86.4% |
-| wallets under star-shaped funders | 14,342 | 12,673 |
+| exactly one funder, itself paid by nobody | 14,280 (70.8%) | 15,930 (71.8%) |
+| effective anonymity set of 1 | 84.7% | 81.3% |
+| wallets solely funded by a star | 3,631 | 4,325 |
 | **their mean effective k** | **1.00** | **1.00** |
+| wallets solely funded by a pool | 1,625 | 2,805 |
+| their mean effective k | 31.19 | 1,137.99 |
 | pooled accounts that break the deposit-to-payout link | 34 of 42 | 35 of 40 |
 
-**27,015 wallets at an effective anonymity set of exactly 1.00**, a figure
-identical across both samples. The population shares differ (90.8% vs 86.4%) and
-both are reported; picking the higher one would misrepresent a window as a
-population.
+**30,210 accounts across both windows were paid by exactly one account that was
+itself paid by nobody.** That figure needs no entropy model: it is read directly
+off the graph. The entropy-based measure agrees and is slightly softer.
 
 ```bash
 cargo run -p provenance-mainnet -- report window-a
@@ -123,12 +125,30 @@ cargo run -p provenance-mainnet -- report window-b
 ```
 
 Both reproduce from `data/window-a.json` and `data/window-b.json` in this
-repository, not from live network state. Re-sampling is
-`cargo run -p provenance-mainnet -- fetch 300 <name>`.
+repository. Re-sampling is `cargo run -p provenance-mainnet -- fetch 300 <name>`.
 
 A 40-slot sample is kept at `data/window-40slot.json` for comparing window
 *size* against window *position*: widening a window moves the population share
 far less than moving it does.
+
+### A measurement error this audit found, and what it cost
+
+`provenance_posterior` originally returned a point mass for any wallet with more
+than one funder — recording the strongest possible claim about roughly 5% of
+accounts, while the comment directly above it said it made no claim. The two
+disagreed and the comment was right.
+
+The effect was not cosmetic. It inflated the population share from 84.7%/81.3%
+to 90.8%/86.4%, and it manufactured the invariant an earlier version of this
+work led with: "every wallet funded by a star sits at exactly 1.00" held only
+because multi-funder wallets had been forced there. Restricted to wallets a star
+*solely* funded, it survives honestly — 1.00 in both windows, over 7,956 wallets
+rather than 27,015.
+
+Each funder now contributes its own candidate set, weighted by how much of the
+wallet's funding arrived through it. Covered by
+`several_funders_widen_the_candidate_set_rather_than_collapsing_it` and
+`a_multi_funder_wallet_inherits_every_crowd_it_was_paid_from`.
 
 **Measurement caveat.** A block window can only ever understate an account's
 depositor count, so every anonymity figure is a lower bound. The breakage test
