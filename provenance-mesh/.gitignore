@@ -1,0 +1,11 @@
+# Rust build output. Also where cargo-build-sbf writes the program keypair,
+# which is the deployed program's upgrade authority and must never be committed.
+/target/
+**/*.rs.bk
+
+# Solana keypairs, wherever they land.
+*keypair*.json
+id.json
+
+# macOS
+.DS_Store

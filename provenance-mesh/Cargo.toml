@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/provenance-core",
+    "crates/provenance-eval",
+    "crates/provenance-program",
+    "crates/provenance-mainnet",
+    "crates/provenance-e2e",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/solanabr/account-cooker"
+
+[workspace.dependencies]
+provenance-core = { path = "crates/provenance-core" }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rand_chacha = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

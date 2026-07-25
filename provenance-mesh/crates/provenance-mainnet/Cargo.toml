@@ -1,0 +1,18 @@
+[package]
+name = "provenance-mainnet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Samples real Solana mainnet funding edges and measures provenance anonymity on them."
+
+[dependencies]
+provenance-core = { workspace = true }
+provenance-eval = { path = "../provenance-eval" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { version = "2", features = ["json"] }
+
+[lints]
+workspace = true
