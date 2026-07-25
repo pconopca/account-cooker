@@ -140,7 +140,7 @@ pub fn generate(spec: FleetSpec, topology: FundingTopology, seed: u64) -> Scenar
                         target: agent_wallet(entity, index),
                         lamports: 10_000_000,
                         slot,
-                        payer: None,
+                        signers: Vec::new(),
                     });
                     slot += 1;
                 }
@@ -158,7 +158,7 @@ pub fn generate(spec: FleetSpec, topology: FundingTopology, seed: u64) -> Scenar
                             target: next.clone(),
                             lamports: 10_000_000,
                             slot,
-                            payer: None,
+                            signers: Vec::new(),
                         });
                         slot += 1;
                         current = next;
@@ -168,7 +168,7 @@ pub fn generate(spec: FleetSpec, topology: FundingTopology, seed: u64) -> Scenar
                         target: agent_wallet(entity, index),
                         lamports: 10_000_000,
                         slot,
-                        payer: None,
+                        signers: Vec::new(),
                     });
                     slot += 1;
                 }
@@ -208,7 +208,7 @@ pub fn generate(spec: FleetSpec, topology: FundingTopology, seed: u64) -> Scenar
                         target: pool.clone(),
                         lamports: 10_000_000,
                         slot,
-                        payer: None,
+                        signers: Vec::new(),
                     });
                     slot += 1;
                 }
@@ -218,7 +218,7 @@ pub fn generate(spec: FleetSpec, topology: FundingTopology, seed: u64) -> Scenar
                         target: recipient.clone(),
                         lamports: 10_000_000,
                         slot,
-                        payer: None,
+                        signers: Vec::new(),
                     });
                     slot += 1;
                 }

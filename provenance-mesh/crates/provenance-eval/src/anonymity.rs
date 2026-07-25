@@ -187,7 +187,7 @@ mod tests {
             target: target.into(),
             lamports: 1,
             slot: 1,
-            payer: None,
+            signers: Vec::new(),
         };
         // One wallet paid by two roots. An observer knows it was one of two, so
         // the effective set is 2 — not 1, which is what a point-mass shortcut
@@ -213,7 +213,7 @@ mod tests {
             target: target.into(),
             lamports: 1,
             slot: 1,
-            payer: None,
+            signers: Vec::new(),
         };
         let mut edges = vec![edge("pool", "wallet"), edge("root", "wallet")];
         for index in 0..8 {

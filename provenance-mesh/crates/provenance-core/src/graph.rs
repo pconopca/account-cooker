@@ -49,17 +49,22 @@ pub struct FundingEdge {
     pub lamports: u64,
     /// Slot the transfer settled in.
     pub slot: u64,
-    /// Fee payer of the transaction that carried this transfer, when known.
+    /// Every account that signed the transaction carrying this transfer.
     ///
     /// This is what decides whether a pooled account actually breaks
     /// provenance. If a pool pays out in a transaction signed by one of its own
-    /// depositors, that depositor has published the link between its deposit
-    /// and that payout, and the pool hid nothing. If the payout is signed by an
-    /// unrelated party, the link exists only off-chain.
+    /// depositors, that depositor authorised the movement and published the
+    /// link between its deposit and that payout; the pool hid nothing. If no
+    /// signer ever deposited, the link exists only off-chain.
     ///
-    /// `None` for synthetic graphs, which model transfers without transactions.
+    /// All signers rather than just the fee payer: roughly 6% of mainnet
+    /// transactions carry more than one, and reading only the payer would call
+    /// a depositor-authorised withdrawal "third-party signed" whenever someone
+    /// else covered the fee — inflating the very break rate this measures.
+    ///
+    /// Empty for synthetic graphs, which model transfers without transactions.
     #[serde(default)]
-    pub payer: Option<WalletId>,
+    pub signers: Vec<WalletId>,
 }
 
 /// A directed multigraph of funding transfers, indexed for reverse traversal.
@@ -223,7 +228,7 @@ mod tests {
             target: target.into(),
             lamports: 1_000_000,
             slot: 1,
-            payer: None,
+            signers: Vec::new(),
         }
     }
 

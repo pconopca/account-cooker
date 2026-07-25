@@ -186,7 +186,7 @@ mod tests {
             target: target.into(),
             lamports: 1_000_000,
             slot: 1,
-            payer: None,
+            signers: Vec::new(),
         }
     }
 

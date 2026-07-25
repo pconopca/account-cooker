@@ -186,7 +186,7 @@ const LAMPORT_MOVING: &[(&str, &str, &str)] = &[
 fn collect_transfers(
     instructions: &serde_json::Value,
     slot: u64,
-    payer: Option<&WalletId>,
+    signers: &[WalletId],
     into: &mut Vec<FundingEdge>,
 ) {
     let Some(list) = instructions.as_array() else {
@@ -237,7 +237,7 @@ fn collect_transfers(
             target: WalletId(destination.to_owned()),
             lamports,
             slot,
-            payer: payer.cloned(),
+            signers: signers.to_vec(),
         });
     }
 }
@@ -256,16 +256,30 @@ pub fn edges_from_transaction(transaction: &serde_json::Value, slot: u64) -> Vec
     {
         return edges;
     }
-    // The fee payer is the first account key, and it always signs. It is the
-    // party that authorised this transfer, which is what decides whether a
-    // pooled payout is linkable back to a depositor.
-    let payer = transaction
-        .pointer("/transaction/message/accountKeys/0/pubkey")
-        .and_then(serde_json::Value::as_str)
-        .map(|key| WalletId(key.to_owned()));
+    // Every signer, not just the fee payer. A depositor that authorises its own
+    // withdrawal while someone else covers the fee would otherwise read as an
+    // unrelated third party, inflating the measured break rate.
+    let signers: Vec<WalletId> = transaction
+        .pointer("/transaction/message/accountKeys")
+        .and_then(serde_json::Value::as_array)
+        .map(|keys| {
+            keys.iter()
+                .filter(|key| {
+                    key.get("signer")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .filter_map(|key| {
+                    key.get("pubkey")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|k| WalletId(k.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     if let Some(top) = transaction.pointer("/transaction/message/instructions") {
-        collect_transfers(top, slot, payer.as_ref(), &mut edges);
+        collect_transfers(top, slot, &signers, &mut edges);
     }
     // CPI transfers are just as real as top-level ones, and a great deal of
     // funding on Solana happens through a program rather than directly.
@@ -275,7 +289,7 @@ pub fn edges_from_transaction(transaction: &serde_json::Value, slot: u64) -> Vec
     {
         for group in inner {
             if let Some(list) = group.get("instructions") {
-                collect_transfers(list, slot, payer.as_ref(), &mut edges);
+                collect_transfers(list, slot, &signers, &mut edges);
             }
         }
     }
@@ -484,21 +498,21 @@ mod tests {
                 target: "pool".into(),
                 lamports: 1,
                 slot: 1,
-                payer: None,
+                signers: Vec::new(),
             },
             FundingEdge {
                 source: "b".into(),
                 target: "pool".into(),
                 lamports: 1,
                 slot: 1,
-                payer: None,
+                signers: Vec::new(),
             },
             FundingEdge {
                 source: "a".into(),
                 target: "pool".into(),
                 lamports: 1,
                 slot: 2,
-                payer: None,
+                signers: Vec::new(),
             },
         ]);
         let counts = depositor_counts(&graph);

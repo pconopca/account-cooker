@@ -113,21 +113,22 @@ pub fn measure(graph: &FundingGraph, pool: &WalletId) -> Breakage {
     let mut recipient_signed = 0_usize;
 
     for edge in graph.edges().iter().filter(|edge| &edge.source == pool) {
-        if edge
-            .payer
-            .as_ref()
-            .is_some_and(|payer| payer == &edge.target)
-        {
+        if edge.signers.contains(&edge.target) {
             recipient_signed += 1;
         }
-        match edge.payer.as_ref() {
-            None => unknown_signer += 1,
-            // The pool signing for itself is not a third party: it is the pool
-            // acting as its own authority, which tells the observer nothing
-            // about which deposit funded this payout.
-            Some(payer) if payer == pool => third_party_signed += 1,
-            Some(payer) if depositors.contains(payer) => self_signed += 1,
-            Some(_) => third_party_signed += 1,
+        if edge.signers.is_empty() {
+            unknown_signer += 1;
+        } else if edge
+            .signers
+            .iter()
+            // The pool signing for itself is not a depositor authorising a
+            // withdrawal: it is the pool acting as its own authority, which
+            // says nothing about which deposit funded this payout.
+            .any(|signer| signer != pool && depositors.contains(signer))
+        {
+            self_signed += 1;
+        } else {
+            third_party_signed += 1;
         }
     }
 
@@ -149,12 +150,17 @@ mod tests {
     use super::*;
 
     fn edge(source: &str, target: &str, payer: Option<&str>) -> FundingEdge {
+        signed(source, target, payer.into_iter().collect())
+    }
+
+    /// An edge carrying an explicit signer set.
+    fn signed(source: &str, target: &str, signers: Vec<&str>) -> FundingEdge {
         FundingEdge {
             source: source.into(),
             target: target.into(),
             lamports: 1_000_000,
             slot: 1,
-            payer: payer.map(Into::into),
+            signers: signers.into_iter().map(Into::into).collect(),
         }
     }
 
@@ -213,6 +219,22 @@ mod tests {
         assert_eq!(breakage.self_signed, 1);
         assert_eq!(breakage.third_party_signed, 1);
         assert_eq!(breakage.break_rate(), Some(0.5));
+    }
+
+    #[test]
+    fn a_depositor_who_signs_but_does_not_pay_the_fee_still_counts() {
+        // The reason this reads every signer instead of the fee payer alone.
+        // Alice deposited and authorised her own withdrawal; a relayer merely
+        // covered the fee. Reading only the payer would call this a break.
+        let graph = FundingGraph::from_edges(vec![
+            edge("alice", "vault", Some("alice")),
+            edge("bob", "vault", Some("bob")),
+            signed("vault", "alice-2", vec!["relayer", "alice"]),
+        ]);
+        let breakage = measure(&graph, &"vault".into());
+        assert_eq!(breakage.self_signed, 1);
+        assert_eq!(breakage.third_party_signed, 0);
+        assert_eq!(breakage.break_rate(), Some(0.0));
     }
 
     #[test]

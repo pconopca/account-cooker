@@ -149,12 +149,19 @@ guessing which decrease paid which increase, which is ambiguous whenever more
 than one account moves. Rather than ship a heuristic that cannot be validated,
 the gap is stated.
 
+**Funding in SPL tokens is out of scope and equally invisible.** The graph is
+denominated in lamports. An operator that funds a fleet in USDC and never sends
+it SOL leaves nothing this tool reads. That is a deliberate boundary rather than
+an oversight — provenance through token accounts is a different graph, with its
+own mint authorities and associated-account derivation — but it means a clean
+result here says nothing about token-funded wallets.
+
 Two independent 300-slot windows are reported rather than one. The population
-share differs between them (88.8% and 87.5% at effective k = 1), so no single
-window should be read as a population statistic. Two figures are stable across
-both: the share of accounts with exactly one funder that was itself paid by
-nobody (72.9% and 73.8%), and the mean effective k of wallets a star-shaped
-funder solely paid (1.00 in both). Those are what the argument rests on.
+share differs between them (85.4% and 88.4% at effective k = 1; 71.9% and 79.9%
+on the structural measure), so no single window should be read as a population
+statistic. What is stable across both is the invariant: wallets a star-shaped
+funder solely paid sit at an effective k of 1.00 in each. That is what the
+argument rests on.
 
 The synthetic topologies were written by the same author as the attacks. That
 circularity is why the mainnet measurement exists; the synthetic tables should

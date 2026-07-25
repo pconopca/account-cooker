@@ -40,32 +40,33 @@ Every number below reproduces from those bytes, not from live network state.
 
 | | window A | window B |
 |---|---|---|
-| transfers | 117,265 | 120,021 |
-| funded accounts | 42,883 | 35,190 |
-| **exactly one funder, itself paid by nobody** | **31,251 (72.9%)** | **25,956 (73.8%)** |
-| effective anonymity set of 1 | 88.8% | 87.5% |
-| star-shaped funding clusters | 2,410 | 2,613 |
-| wallets *solely* funded by a star | 14,011 | 11,400 |
+| transfers | 107,037 | 106,087 |
+| funded accounts | 32,594 | 39,228 |
+| **exactly one funder, itself paid by nobody** | **23,427 (71.9%)** | **31,343 (79.9%)** |
+| effective anonymity set of 1 | 85.4% | 88.4% |
+| star-shaped funding clusters | 2,136 | 2,112 |
+| wallets *solely* funded by a star | 9,259 | 20,445 |
 | **their mean effective k** | **1.00** | **1.00** |
-| pooled clusters | 138 | 164 |
-| wallets solely funded by a pool | 2,617 | 2,492 |
-| their mean effective k | 45.07 | 119.62 |
+| pooled clusters | 231 | 121 |
+| wallets solely funded by a pool | 2,779 | 2,838 |
+| their mean effective k | 94.44 | 64.72 |
 
-**57,207 accounts across the two windows were paid by exactly one account that
-was itself paid by nobody.** 72.9% and 73.8% — a single identifiable origin,
-established by inspection rather than inferred from a model.
-
-The entropy-based reading agrees: 88.8% and 87.5% sit at an effective anonymity
-set of 1 once every funder's crowd is accounted for.
+**54,770 accounts across the two windows were paid by exactly one account that
+was itself paid by nobody.** A single identifiable origin, established by
+inspection rather than inferred from a model.
 
 A star-shaped funder pays many accounts while being paid by almost none. Wallets
 whose *only* funder is such an account measure at exactly 1.00 in both windows —
-25,411 of them. Wallets whose only funder is a pooled account measure at 45.07
-and 119.62.
+29,704 of them. Wallets whose only funder is a pooled account measure at 94.44
+and 64.72.
 
 That contrast is the whole finding. Two accounts can fund the same number of
 wallets and hand them anonymity sets two orders of magnitude apart, decided
 entirely by whether the funder was itself paid by a crowd.
+
+The population shares move between windows — 71.9% against 79.9% — which is why
+two are reported rather than the flattering one. What does not move is the
+invariant: wallets a star solely paid sit at 1.00 in both.
 
 Behavioural noise cannot move any of this. The funding edge is recorded before
 the agent has behaved at all.
@@ -74,58 +75,48 @@ Note what is *not* claimed: nothing identifies these clusters as bot fleets,
 airdrops, payroll, or anything else. Intent is not observable and none is
 imputed. What is observable is the shape, and the shape decides the privacy.
 
-**Two corrections behind these numbers**, both found by auditing this repository
-and both documented rather than quietly applied.
-
-The extractor originally read only `transfer` and `transferWithSeed`, and missed
-`createAccount` entirely — which is how a fresh wallet comes into existence, and
-fresh wallets are exactly what a fleet is made of. Measured over six mainnet
-blocks, that was 854 lamport-moving instructions ignored against 1,310 captured.
-Re-sampling with the gap closed roughly doubled the graph, from 60,268 and
-72,080 edges to 117,265 and 120,021.
-
-The anonymity measure separately collapsed every multi-funder wallet to a point
-mass while its own comment claimed it made no assertion about them. That
-inflated the population share and manufactured a cleaner invariant than the data
-supported. Each funder now contributes its own candidate set.
-
-Both corrections moved the numbers and neither weakened the conclusion: window
-agreement on the structural measure tightened from 70.8/71.8 to 72.9/73.8.
-
 ### Working provenance breaks already exist — and every one has a gatekeeper
-
-This began as a check on an assumption, and the assumption was wrong.
 
 A pool with a thousand depositors looks like it must confer anonymity. Often it
 confers none, and the funding graph alone cannot tell you which: the answer is in
 who *signed* the payout. A payout authorised by one of the pool's own depositors
-publishes the link between a deposit and a destination. A payout authorised by
-anyone else does not.
+publishes the link between a deposit and a destination. A payout no depositor
+signed does not.
 
 Testing every pooled account with 8 or more distinct depositors:
 
 | verdict | window A | window B |
 |---|---|---|
-| breaks the deposit-to-payout link | **33** of 43 | **31** of 40 |
-| passthrough — hides nothing | 3 | 2 |
-| partial | 7 | 7 |
-
-The largest pools run to well over a thousand depositors with no payout signed
-by any of them.
+| breaks the deposit-to-payout link | **34** of 50 | **22** of 35 |
+| passthrough — hides nothing | 8 | 7 |
+| partial | 8 | 6 |
 
 That test is biased by window length — someone who deposited last week and
-withdrew today reads as a stranger — so it is paired with one that is not: whether
-the recipient signed its own payout, settled inside a single transaction and
-immune to how far back the window reaches. Only a handful of pools in each
-window are self-service, and the largest sit at 0.00. The two measurements
-agree.
+withdrew today reads as a stranger — so it is paired with one that is not:
+whether the recipient signed its own payout, settled inside a single transaction
+and immune to how far back the window reaches. 10 of 50 and 6 of 35 pools are
+self-service by that reading.
 
 **So provenance privacy on Solana is not impossible. It is routine, and it is
-locked behind an intermediary.** Every working pool here is custodial or mediated:
+locked behind an intermediary.** The pools that work are custodial or mediated:
 you obtain that anonymity by being someone's customer, not by choosing it.
 
-That is the gap this workspace targets. Not the idea of a pool — a permissionless,
-non-custodial one.
+That is the gap this workspace targets. Not the idea of a pool — a
+permissionless, non-custodial one.
+
+**Three corrections behind these numbers**, all found by auditing this repository
+and all documented rather than quietly applied.
+
+The extractor read only `transfer` and `transferWithSeed`, missing
+`createAccount` — which is how a fresh wallet comes into existence, and fresh
+wallets are exactly what a fleet is made of. The anonymity measure separately
+collapsed every multi-funder wallet to a point mass while its own comment claimed
+it made no assertion about them. And the breakage test read only the fee payer,
+so a depositor who authorised their own withdrawal while a relayer covered the
+fee counted as a stranger — inflating the very break rate it measured. Reading
+every signer moved window B from 31 of 40 to 22 of 35.
+
+Each correction moved the numbers. None weakened the invariant.
 
 ## The obvious fix does not work
 
@@ -295,7 +286,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 83 tests
+cargo test --workspace                                   # 84 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings

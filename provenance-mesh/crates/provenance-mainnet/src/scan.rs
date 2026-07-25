@@ -180,14 +180,14 @@ where
             &left.target,
             left.lamports,
             left.slot,
-            &left.payer,
+            &left.signers,
         )
             .cmp(&(
                 &right.source,
                 &right.target,
                 right.lamports,
                 right.slot,
-                &right.payer,
+                &right.signers,
             ))
     });
     edges.dedup();
