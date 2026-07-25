@@ -29,6 +29,7 @@ These are checked on chain and proven by the negative cases in
 | The set is real | payouts refused below the distinct-depositor floor | scenario 3, error `0x7` |
 | No value is created | payouts capped at deposits taken in | `authorize_payouts`, and the round account holding exactly rent afterwards |
 | The set cannot be diluted after the fact | deposits refused once settlement starts | `RoundSettling` |
+| Only the coordinator may settle | settler must equal the round's authority | scenario 4, error `0xe` |
 
 The design rule throughout is **fail closed**. A round that cannot deliver the
 anonymity it advertised aborts. It never settles with a quietly weaker guarantee,
@@ -59,6 +60,21 @@ Two agents of the same operator still share that operator's source wallet
 further back in the graph. `AncestorJaccard` measures the residual at **0.608**
 for 8-payout rounds, falling to **0.500** at 64. Wider rounds dilute the shared
 ancestor among more candidates.
+
+### Settlement delivery — trusted, and it did not used to be
+
+The round's authority names the recipients at settlement. It cannot forge the
+anonymity set, settle early, or move more than the round holds — all of those
+are enforced. It *can* pay the wrong people.
+
+This is the same class of assumption already made of relayers, and it is the
+weaker half of this design. Committing to a hash of the recipient set when the
+round opens would remove it entirely; that is future work, not a claim.
+
+It is documented here because an audit of this repository found it was worse
+than trusted: settlement originally checked only that its caller had signed, so
+*any* stranger could drain a funded round. That was demonstrated on devnet
+before being fixed, and both transactions are in [`PROOF.md`](PROOF.md).
 
 ### Sybil funders — open, not addressed
 
@@ -120,10 +136,12 @@ front-run also makes sybil fleets harder to attribute — including fleets built
 to farm airdrops or manufacture volume.
 
 Two things are worth stating plainly. First, this design deliberately does
-**not** mix value: denominations are uniform and conserved, no participant's
-balance changes as a result of another's, and the pool is non-custodial in
-effect — it takes in exactly what it pays out. It breaks the *linkage* between
-funder and recipient, not the traceability of funds in aggregate.
+**not** mix value: denominations are uniform and conserved, and no participant's
+balance changes as a result of another's. The pool holds funds only between
+deposit and settlement, and pays out exactly what it took in. It breaks the
+*linkage* between funder and recipient, not the traceability of funds in
+aggregate. It is not, however, trustless in delivery — see the settlement
+section above.
 
 Second, the on-chain record of who deposited into which round is permanent and
 public. Association-set proofs and viewing-key disclosure, as implemented in the
@@ -136,10 +154,12 @@ is not built here.
 
 In rough order of value:
 
-1. **A cost on entry**, to price sybil funders — the single largest open gap.
-2. **Deposit-count normalisation**: require every funder in a round to deposit
+1. **A recipient-set commitment at open time**, removing the authority's ability
+   to misdeliver. The largest remaining trust assumption.
+2. **A cost on entry**, to price sybil funders.
+3. **Deposit-count normalisation**: require every funder in a round to deposit
    the same number of times, closing the multiplicity channel by construction
    rather than measuring it quiet.
-3. **Deposit timing jitter**, so burst deposits stop announcing fleet size.
-4. **Multi-round layering**, to attack the residual ancestor overlap that a
+4. **Deposit timing jitter**, so burst deposits stop announcing fleet size.
+5. **Multi-round layering**, to attack the residual ancestor overlap that a
    single round leaves at small `k`.

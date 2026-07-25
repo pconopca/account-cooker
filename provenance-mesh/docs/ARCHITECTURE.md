@@ -92,14 +92,20 @@ deposit  x capacity
     -> records the depositor if new; refuses once full or once settling
 
 settle(recipients[])
-    -> refuses unless deposits are complete           (0x6)
-    -> refuses below the distinct-depositor floor     (0x7)
+    -> refuses unless the caller is the round's authority  (0xe)
+    -> refuses unless deposits are complete                (0x6)
+    -> refuses below the distinct-depositor floor          (0x7)
     -> refuses duplicates, self-payment, rent breach
     -> pays `denomination` to each recipient
 ```
 
 Settlement may be batched across several calls; `settled_count` is capped at
 `capacity`, so a round can never pay out more than it took in.
+
+The authority check is first, and it is deliberately first: a refused settlement
+must move no lamports and leave no trace in the round's state. It exists because
+without it any signer could settle a funded round to addresses of their own —
+found, demonstrated on devnet, and fixed. See `PROOF.md`.
 
 ### Why the mapping is absent rather than hidden
 
@@ -114,7 +120,7 @@ there is no unlinkability proof, unlike the Groth16 constructions in
 
 ### Account layout
 
-`Round` is borsh-encoded into a fixed 1,054-byte account sized for a full
+`Round` is borsh-encoded into a fixed 1,086-byte account sized for a full
 32-depositor roster. Since the encoded state is usually shorter, reads use
 `BorshDeserialize::deserialize` from a cursor rather than `try_from_slice`, which
 rejects trailing bytes and caused every on-chain deposit to fail until it was

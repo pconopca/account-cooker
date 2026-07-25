@@ -132,7 +132,7 @@ fn open_round(
 
     // Validate before creating the account, so a misconfigured round costs the
     // caller nothing and cannot strand rent in an unusable pool.
-    let round = Round::new(bump, denomination, k_min, capacity)?;
+    let round = Round::new(bump, *authority.key, denomination, k_min, capacity)?;
 
     let rent = Rent::get()?.minimum_balance(ROUND_ACCOUNT_LEN);
     invoke_signed_create(
@@ -233,7 +233,9 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
 
     let mut round = load_round(program_id, round_account)?;
     let payouts = u32::try_from(recipients.len()).map_err(|_| ProgramError::InvalidArgument)?;
-    round.authorize_payouts(payouts)?;
+    // Authorisation first: a refused settlement must move no lamports and
+    // leave no trace in the round's state.
+    round.authorize_payouts(settler.key, payouts)?;
 
     // Reject duplicates and self-payment before moving any lamports: a partial
     // settlement that aborts halfway would leave the round unusable.

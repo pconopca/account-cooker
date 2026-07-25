@@ -19,6 +19,7 @@ pub const MAX_DEPOSITORS: usize = 32;
 
 /// Serialized size of a [`Round`] with a full depositor roster.
 pub const ROUND_ACCOUNT_LEN: usize = 1  // bump
+    + 32                                // authority
     + 1                                 // settling flag
     + 8                                 // denomination
     + 4                                 // k_min
@@ -33,6 +34,18 @@ pub const ROUND_ACCOUNT_LEN: usize = 1  // bump
 pub struct Round {
     /// PDA bump seed.
     pub bump: u8,
+    /// The account permitted to settle this round.
+    ///
+    /// Without this, any signer could call `settle` naming recipients of their
+    /// choosing and take every deposit: value would still be conserved, but not
+    /// ownership. Settlement therefore has to be authorised by the party that
+    /// opened the round and coordinated its participants.
+    ///
+    /// This does not weaken the privacy property. The authority learns the
+    /// deposit-to-payout mapping because it collected the recipient list, but
+    /// the chain still records no association, which is what an observer reads.
+    /// It does make the authority trusted for *delivery* — see `THREAT_MODEL.md`.
+    pub authority: Pubkey,
     /// Whether settlement has started, freezing the anonymity set.
     pub settling: bool,
     /// Uniform payout size in lamports.
@@ -56,6 +69,7 @@ impl Round {
     /// Returns the first violated invariant.
     pub fn new(
         bump: u8,
+        authority: Pubkey,
         denomination: u64,
         k_min: u32,
         capacity: u32,
@@ -76,6 +90,7 @@ impl Round {
         }
         Ok(Self {
             bump,
+            authority,
             settling: false,
             denomination,
             k_min,
@@ -116,12 +131,20 @@ impl Round {
         self.depositors.len()
     }
 
-    /// Check that `payouts` more payouts may be made, and account for them.
+    /// Check that `settler` may settle `payouts` more payouts, and account for them.
     ///
     /// # Errors
-    /// Fails when deposits are incomplete, the funder floor is unmet, or the
-    /// payouts would exceed what the round took in.
-    pub fn authorize_payouts(&mut self, payouts: u32) -> Result<(), ProvenanceError> {
+    /// Fails when the caller is not the round's authority, when deposits are
+    /// incomplete, when the funder floor is unmet, or when the payouts would
+    /// exceed what the round took in.
+    pub fn authorize_payouts(
+        &mut self,
+        settler: &Pubkey,
+        payouts: u32,
+    ) -> Result<(), ProvenanceError> {
+        if settler != &self.authority {
+            return Err(ProvenanceError::UnauthorizedSettler);
+        }
         if !self.deposits_complete() {
             return Err(ProvenanceError::DepositsIncomplete);
         }
@@ -151,8 +174,12 @@ impl Round {
 mod tests {
     use super::*;
 
+    fn authority() -> Pubkey {
+        Pubkey::new_from_array([200; 32])
+    }
+
     fn round() -> Round {
-        Round::new(255, 1_000_000, 3, 6).expect("valid configuration")
+        Round::new(255, authority(), 1_000_000, 3, 6).expect("valid configuration")
     }
 
     #[test]
@@ -177,17 +204,17 @@ mod tests {
     #[test]
     fn degenerate_configurations_are_rejected() {
         assert_eq!(
-            Round::new(255, 0, 3, 6),
+            Round::new(255, authority(), 0, 3, 6),
             Err(ProvenanceError::ZeroDenomination)
         );
         for k in [0, 1] {
             assert_eq!(
-                Round::new(255, 1_000, k, 6),
+                Round::new(255, authority(), 1_000, k, 6),
                 Err(ProvenanceError::DegenerateAnonymitySet)
             );
         }
         assert_eq!(
-            Round::new(255, 1_000, 33, 64),
+            Round::new(255, authority(), 1_000, 33, 64),
             Err(ProvenanceError::TooManyDepositors)
         );
     }
@@ -197,10 +224,10 @@ mod tests {
         // Four deposits can never produce five distinct funders, so the round
         // would take money and then be unable to ever settle.
         assert_eq!(
-            Round::new(255, 1_000, 5, 4),
+            Round::new(255, authority(), 1_000, 5, 4),
             Err(ProvenanceError::InvalidCapacity)
         );
-        assert!(Round::new(255, 1_000, 5, 5).is_ok());
+        assert!(Round::new(255, authority(), 1_000, 5, 5).is_ok());
     }
 
     #[test]
@@ -215,7 +242,7 @@ mod tests {
         assert_eq!(round.achieved_k(), 1);
         // And that is exactly what blocks settlement.
         assert_eq!(
-            round.authorize_payouts(6),
+            round.authorize_payouts(&authority(), 6),
             Err(ProvenanceError::AnonymitySetTooSmall)
         );
     }
@@ -241,7 +268,7 @@ mod tests {
             .record_deposit(Pubkey::new_from_array([1; 32]))
             .expect("deposit accepted");
         assert_eq!(
-            round.authorize_payouts(1),
+            round.authorize_payouts(&authority(), 1),
             Err(ProvenanceError::DepositsIncomplete)
         );
     }
@@ -254,13 +281,57 @@ mod tests {
                 .record_deposit(Pubkey::new_from_array([index; 32]))
                 .expect("deposit accepted");
         }
-        round.authorize_payouts(4).expect("first batch");
-        round.authorize_payouts(2).expect("second batch");
+        round
+            .authorize_payouts(&authority(), 4)
+            .expect("first batch");
+        round
+            .authorize_payouts(&authority(), 2)
+            .expect("second batch");
         assert_eq!(round.settled_count, 6);
         // Value conservation: not one payout more than the round took in.
         assert_eq!(
-            round.authorize_payouts(1),
+            round.authorize_payouts(&authority(), 1),
             Err(ProvenanceError::PayoutExceedsCapacity)
+        );
+    }
+
+    #[test]
+    fn only_the_authority_can_settle() {
+        // The round is complete and every other invariant is satisfied, so the
+        // authority check is the only thing standing between a stranger and
+        // every deposit in the pool.
+        let mut round = round();
+        for index in 0..6_u8 {
+            round
+                .record_deposit(Pubkey::new_from_array([index; 32]))
+                .expect("deposit accepted");
+        }
+        let stranger = Pubkey::new_from_array([1; 32]);
+        assert_eq!(
+            round.authorize_payouts(&stranger, 6),
+            Err(ProvenanceError::UnauthorizedSettler)
+        );
+        // And nothing was accounted for on the refused attempt.
+        assert_eq!(round.settled_count, 0);
+        assert!(!round.settling);
+        // The authority still can.
+        assert!(round.authorize_payouts(&authority(), 6).is_ok());
+    }
+
+    #[test]
+    fn a_depositor_is_not_automatically_a_settler() {
+        // Being in the pool does not confer the right to drain it.
+        let mut round = round();
+        let depositor = Pubkey::new_from_array([9; 32]);
+        round.record_deposit(depositor).expect("deposit accepted");
+        for index in 0..5_u8 {
+            round
+                .record_deposit(Pubkey::new_from_array([index; 32]))
+                .expect("deposit accepted");
+        }
+        assert_eq!(
+            round.authorize_payouts(&depositor, 6),
+            Err(ProvenanceError::UnauthorizedSettler)
         );
     }
 
@@ -272,7 +343,9 @@ mod tests {
                 .record_deposit(Pubkey::new_from_array([index; 32]))
                 .expect("deposit accepted");
         }
-        round.authorize_payouts(1).expect("first batch");
+        round
+            .authorize_payouts(&authority(), 1)
+            .expect("first batch");
         // Late deposits cannot join a round whose payouts are already visible.
         assert_eq!(
             round.record_deposit(Pubkey::new_from_array([50; 32])),

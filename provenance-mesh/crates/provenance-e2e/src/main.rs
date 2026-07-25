@@ -8,6 +8,7 @@
 //! 2. Settlement before the deposits are complete is refused on chain.
 //! 3. A round whose deposits all come from one key is refused on chain, because
 //!    it would deliver no anonymity while appearing full.
+//! 4. A stranger cannot settle a funded round to recipients of their choosing.
 //!
 //! The negative cases matter as much as the positive one: they are what
 //! separate an enforced guarantee from a documented intention.
@@ -245,6 +246,59 @@ fn scenario_single_depositor(runner: &Runner, nonce: u64) -> Result<(), String> 
     }
 }
 
+fn scenario_unauthorized_settler(runner: &Runner, nonce: u64) -> Result<(), String> {
+    println!("\n## Scenario 4 - a stranger cannot settle a funded round\n");
+    // Every other invariant is satisfied: the round is complete and has enough
+    // distinct funders. Only the authority check stands between an outsider and
+    // every deposit in the pool.
+    let (round, _) = runner.open(nonce, K_MIN, CAPACITY)?;
+    let depositors = runner.fund_depositors(CAPACITY as usize)?;
+    for depositor in &depositors {
+        runner.send(
+            &[deposit(&runner.program, &depositor.pubkey(), &round)],
+            &[&runner.payer, depositor],
+        )?;
+    }
+
+    let stranger = Keypair::new();
+    runner.send(
+        &[solana_system_interface::instruction::transfer(
+            &runner.payer.pubkey(),
+            &stranger.pubkey(),
+            RENT_BUFFER,
+        )],
+        &[&runner.payer],
+    )?;
+    println!(
+        "Round is full and valid. Stranger `{}` attempts to settle it to their own addresses.",
+        stranger.pubkey()
+    );
+
+    let stolen: Vec<Pubkey> = (0..CAPACITY).map(|_| Keypair::new().pubkey()).collect();
+    match runner.send(
+        &[settle(
+            &runner.program,
+            &stranger.pubkey(),
+            &round,
+            &stolen,
+        )],
+        &[&runner.payer, &stranger],
+    ) {
+        Ok(signature) => Err(format!(
+            "a stranger drained the round, which is the bug this check exists to prevent: {signature}"
+        )),
+        Err(error) => {
+            println!("Refused on chain, as required: `{error}`");
+            // UnauthorizedSettler is custom error 14 = 0xe.
+            if error.contains("0xe") {
+                Ok(())
+            } else {
+                Err(format!("expected custom error 0xe, got: {error}"))
+            }
+        }
+    }
+}
+
 /// Read the CLI's keypair format: a JSON array of 64 bytes.
 fn read_keypair(path: &Path) -> Result<Keypair, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -324,6 +378,10 @@ fn main() {
         (
             "single-depositor round refused",
             scenario_single_depositor(&runner, nonce_base + 2),
+        ),
+        (
+            "unauthorized settler refused",
+            scenario_unauthorized_settler(&runner, nonce_base + 3),
         ),
     ];
 

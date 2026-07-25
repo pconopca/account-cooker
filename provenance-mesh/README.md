@@ -3,8 +3,8 @@
 **The funding graph is the channel nobody closed.**
 
 Every `account-cooker` submission so far measures behavioural noise — timing,
-amounts, protocol mixes — and each one is careful and well-measured. None of
-them touches how the agents were paid for, and all of them say so:
+amounts, protocol mixes — and each one is careful and well-measured. None
+addresses how the agents were paid for, and several say so outright:
 
 - `account-cooker` [#2](https://github.com/solanabr/account-cooker/pull/2) reports
   its own result plainly: *"the common-funder graph remains directly
@@ -23,12 +23,13 @@ them touches how the agents were paid for, and all of them say so:
   [#2](https://github.com/solanabr/mirror-pool/pull/2) both show effective-k
   collapsing under funding-provenance partitioning.
 
-Six strong submissions, one unanimous gap. This workspace closes it: it measures
-the channel, shows the obvious fix does not work, supplies the crowd interface
-`supersonic-tx` asked for, and enforces it on chain.
+Five submissions, one open channel. This workspace measures it, shows the
+obvious fix does not work, and ships a permissionless mechanism that closes it
+on chain.
 
-It is a layer, not a competitor. It sits underneath any of the three
-architectures and does not ask a maintainer to choose against one.
+It is a funding layer, not a competing cooker. Nothing here conflicts with the
+architectures in #1, #2 or #3 — but it is not integrated with them either, and
+that integration is not written yet.
 
 ---
 
@@ -169,9 +170,10 @@ Program [`8xrL8baL63gADaxWkDCWhnc8EceAKmq6oKmBtfmqSQ39`](https://explorer.solana
 
 | scenario | result | compute units |
 |---|---|---|
-| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,689 |
-| settlement before the round fills | refused, `0x6` | 1,275 |
-| round filled to capacity by one key | refused, `0x7` | 1,638 |
+| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,789 |
+| settlement before the round fills | refused, `0x6` | 1,335 |
+| round filled to capacity by one key | refused, `0x7` | 1,699 |
+| a stranger tries to settle a funded round | refused, `0xe` | 2,859 |
 
 Every signature is in [`docs/PROOF-devnet.md`](docs/PROOF-devnet.md). After
 settlement the round account holds exactly its rent and nothing more — value
@@ -181,7 +183,13 @@ The negative cases carry the weight. Scenario 3 is the failure that would
 otherwise be silent: a round that looks full but was filled by a single key
 offers an anonymity set of one, and the program refuses it.
 
-**Cost.** 4,689 CU to settle eight payouts. The Groth16 approaches in
+Scenario 4 exists because an audit of this workspace found that it did not.
+Settlement originally checked only that the caller had signed, so any stranger
+could drain a funded round to addresses of their choosing — value conserved,
+ownership not. It was demonstrated on devnet, then fixed and demonstrated
+refused. Both transactions are in [`docs/PROOF.md`](docs/PROOF.md).
+
+**Cost.** 4,789 CU to settle eight payouts. The Groth16 approaches in
 `mirror-pool` report ~98k–108k CU to verify one membership proof. This is
 roughly 20× cheaper, with no trusted setup and no ceremony — a different point
 on the trade-off curve, not a replacement for them.
@@ -250,7 +258,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 74 tests
+cargo test --workspace                                   # 76 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings
@@ -295,6 +303,10 @@ See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full treatment. In sh
   cost this protocol does not yet impose.
 - **It is structural, not cryptographic.** There is no proof of unlinkability
   here, unlike the ZK constructions in `mirror-pool`.
+- **Settlement is trusted for delivery.** The round's authority names the
+  recipients. It cannot forge the anonymity set or take more than the round
+  holds, but it can pay the wrong people. Committing to the recipient set at
+  open time would remove that, and is not built.
 - **It stops at the chain boundary.** Correlated IPs or RPC metadata defeat all
   of it.
 

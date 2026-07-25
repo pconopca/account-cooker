@@ -38,6 +38,12 @@ pub enum ProvenanceError {
     RoundAddressMismatch = 12,
     /// Stored state failed to decode.
     MalformedRoundState = 13,
+    /// Settlement was attempted by someone other than the round's authority.
+    ///
+    /// Without this check any signer could settle a funded round to recipients
+    /// of their choosing: the accounting would still balance, but the deposits
+    /// would leave to the wrong people.
+    UnauthorizedSettler = 14,
 }
 
 impl From<ProvenanceError> for ProgramError {

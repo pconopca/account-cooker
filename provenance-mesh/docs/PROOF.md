@@ -29,40 +29,55 @@ Program: [`8xrL8baL63gADaxWkDCWhnc8EceAKmq6oKmBtfmqSQ39`](https://explorer.solan
 
 | scenario | outcome | compute units |
 |---|---|---|
-| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,689 |
-| settlement before deposits complete | refused, `0x6` `DepositsIncomplete` | 1,275 |
-| round filled to capacity by one key | refused, `0x7` `AnonymitySetTooSmall` | 1,638 |
+| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,789 |
+| settlement before deposits complete | refused, `0x6` `DepositsIncomplete` | 1,335 |
+| round filled to capacity by one key | refused, `0x7` `AnonymitySetTooSmall` | 1,699 |
+| settlement by a stranger | refused, `0xe` `UnauthorizedSettler` | 2,859 |
 
-Round account [`4Qu2xRJYycE54XKr9iTdABRQqkHP48MCedkWaCSFD55D`](https://explorer.solana.com/address/4Qu2xRJYycE54XKr9iTdABRQqkHP48MCedkWaCSFD55D?cluster=devnet)
+Round account [`EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt`](https://explorer.solana.com/address/EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt?cluster=devnet)
 
-Settlement [`2NuhF9GkEoB68vWWcDWPURxPVJkYsQpko3WVU54XCxLFGXKTm5XYyNUnHDnMkkWRMbkShViY1HyaxpoKaqg5fva8`](https://explorer.solana.com/tx/2NuhF9GkEoB68vWWcDWPURxPVJkYsQpko3WVU54XCxLFGXKTm5XYyNUnHDnMkkWRMbkShViY1HyaxpoKaqg5fva8?cluster=devnet)
-— executed in slot 478836623.
+Settlement [`48mNCQbbgiET3KcqfHJx3HVYYH8dBppTf5V3JPRsCEvnPc5R91GV41QJHaGveadeRbwvPDjwZYYH1pPUAheHPuav`](https://explorer.solana.com/tx/48mNCQbbgiET3KcqfHJx3HVYYH8dBppTf5V3JPRsCEvnPc5R91GV41QJHaGveadeRbwvPDjwZYYH1pPUAheHPuav?cluster=devnet)
+— executed in slot 478873841.
 
-Every signature for all three scenarios is in
-[`PROOF-devnet.md`](PROOF-devnet.md); the same run against a local validator is
-in [`PROOF-localnet.md`](PROOF-localnet.md).
+Every signature for all four scenarios is in [`PROOF-devnet.md`](PROOF-devnet.md).
 
 ### Value conservation, in on-chain state
 
 After settling 8 payouts of 1,000,000 lamports each, the round account holds
-**0.00822672 SOL** — exactly the rent-exempt minimum for its 1,054 bytes, and
+**0.00844944 SOL** — exactly the rent-exempt minimum for its 1,086 bytes, and
 nothing more. Every deposited lamport left the pool. The client independently
 checks that all 8 recipients hold exactly one denomination before reporting PASS.
 
-Verify directly:
-
 ```bash
-solana account 4Qu2xRJYycE54XKr9iTdABRQqkHP48MCedkWaCSFD55D --url devnet
-solana confirm -v 2NuhF9GkEoB68vWWcDWPURxPVJkYsQpko3WVU54XCxLFGXKTm5XYyNUnHDnMkkWRMbkShViY1HyaxpoKaqg5fva8 --url devnet
+solana account EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt --url devnet
+solana rent 1086 --url devnet    # 0.00844944 SOL
 ```
 
-### Why the negative cases matter more than the positive one
+### A vulnerability this repository's own audit found, and the proof it is closed
 
-A program that settles a well-formed round proves it can move lamports.
-Scenarios 2 and 3 prove it *refuses* — that the anonymity floor is enforced
-rather than documented. Scenario 3 is the silent failure this whole design
-exists to prevent: a round that looks full, but was filled by one key, offering
-an anonymity set of exactly one.
+Settlement originally verified only that its caller had *signed*. It never
+compared the caller to anything, and the round stored no authority. Any stranger
+could therefore call `settle` on a funded round, name eight addresses of their
+own, and take every deposit. The accounting stayed balanced — value conserved —
+but ownership did not.
+
+This was not a reading of the code. It was demonstrated against the deployed
+program on devnet:
+
+- **Exploited**, on the vulnerable build:
+  [`5WfMy39cNSP1xMJkSKefFe3T9v2gDrtLwjPSwNCiD7pMxksjmMSAgcD2fCXqX96Jco7RtXay6zk6pWPibF3L9iTs`](https://explorer.solana.com/tx/5WfMy39cNSP1xMJkSKefFe3T9v2gDrtLwjPSwNCiD7pMxksjmMSAgcD2fCXqX96Jco7RtXay6zk6pWPibF3L9iTs?cluster=devnet)
+  — a stranger drains a round it never contributed to.
+- **Refused**, on the fixed build: scenario 4 above, custom error `0xe`.
+
+The fix stores the opening account as the round's `authority` and requires the
+settler to match it. That trades "anyone can steal" for "the coordinator the
+participants already chose could misdeliver" — the same class of assumption the
+threat model already documents for relayers, and it is now written there
+explicitly. Committing to a hash of the recipient set at open time would remove
+even that, and is listed as future work rather than claimed.
+
+Two regression tests lock it: `only_the_authority_can_settle` and
+`a_depositor_is_not_automatically_a_settler`.
 
 ## 3. Real mainnet measurement
 
@@ -125,10 +140,14 @@ Tests that encode the honest limits rather than the happy path:
 - `hop_chaining_defeats_the_shallow_attack_only` — the intuitive fix is not one
 - `total_ties_score_one_half` — a defence that collapses every score must
   measure as chance, not as a perfect defence
+- `only_the_authority_can_settle` — a stranger with a valid, complete round in
+  front of them still cannot take it
 
 ## 5. Two bugs the live run caught that unit tests could not
 
-Recorded because they are the argument for running against a real cluster.
+Recorded because they are the argument for running against a real cluster. A
+third — unauthorised settlement — is in section 2, and a unit test suite alone
+would not have surfaced any of them.
 
 **Borsh trailing bytes.** The round account is sized for a full 32-depositor
 roster (1,054 bytes); the initial state encodes to 30. `try_from_slice` treats
