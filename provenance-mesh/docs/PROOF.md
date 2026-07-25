@@ -124,7 +124,7 @@ cargo run -p provenance-mainnet -- report window-a
 cargo run -p provenance-mainnet -- report window-b
 ```
 
-Both reproduce from `data/window-a.json` and `data/window-b.json` in this
+Both reproduce from `data/window-a.json.gz` and `data/window-b.json.gz` in this
 repository. Re-sampling is `cargo run -p provenance-mainnet -- fetch 300 <name>`.
 
 ### Two measurement errors this audit found, and what they cost

@@ -13,6 +13,7 @@ provenance-eval = { path = "../provenance-eval" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ureq = { version = "2", features = ["json"] }
+flate2 = "1"
 
 [lints]
 workspace = true

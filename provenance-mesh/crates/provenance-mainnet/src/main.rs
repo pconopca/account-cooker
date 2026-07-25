@@ -21,12 +21,28 @@ fn data_dir() -> PathBuf {
 }
 
 fn cache_path(name: &str) -> PathBuf {
-    data_dir().join(format!("{name}.json"))
+    data_dir().join(format!("{name}.json.gz"))
 }
 
+/// Samples are stored gzipped. They compress to roughly a fifth of their size,
+/// which is the difference between a repository someone will clone and one they
+/// will not — without giving up the property that every published figure
+/// reproduces from bytes committed here rather than from a live network.
 fn load_sample(name: &str) -> Option<Sample> {
-    let bytes = std::fs::read(cache_path(name)).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let file = std::fs::File::open(cache_path(name)).ok()?;
+    serde_json::from_reader(flate2::read::GzDecoder::new(file)).ok()
+}
+
+fn store_sample(name: &str, sample: &Sample) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = cache_path(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(&path)?;
+    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
+    serde_json::to_writer(&mut encoder, sample)?;
+    encoder.finish()?;
+    Ok(path)
 }
 
 #[allow(
@@ -58,11 +74,7 @@ fn do_fetch(blocks: u64, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         sampled.edges.len()
     );
 
-    let path = cache_path(name);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, serde_json::to_vec(&sampled)?)?;
+    let path = store_sample(name, &sampled)?;
     eprintln!("wrote {}", path.display());
     Ok(())
 }

@@ -144,8 +144,10 @@ version matched only the two `transfer` variants and silently dropped roughly a
 third of the graph. Account creation is not an edge case here: it is how a fresh
 wallet comes into existence.
 
-Samples are written to `data/<name>.json` and committed, so the analysis
-reproduces from bytes in the repository rather than from live network state.
+Samples are written gzipped to `data/<name>.json.gz` and committed, so the
+analysis reproduces from bytes in the repository rather than from live network
+state. They compress to roughly a fifth of their size, which is the difference
+between a repository someone will clone and one they will not.
 
 It also carries `scan`, which works the other way around: given a list of
 addresses, it fetches each one's recent transactions, then does the same for

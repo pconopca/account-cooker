@@ -2022,6 +2022,7 @@ dependencies = [
 name = "provenance-mainnet"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "provenance-core",
  "provenance-eval",
  "serde",

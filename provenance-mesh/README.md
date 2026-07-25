@@ -297,8 +297,8 @@ cargo run -p provenance-eval --example comparison        # topology table
 cargo run -p provenance-eval --example crowd_size        # crowd-size table
 ```
 
-Both mainnet windows are committed as JSON, so the analysis reproduces from the
-bytes in this repository rather than from whatever mainnet looks like today.
+Both mainnet windows are committed as gzipped JSON, so the analysis reproduces
+from the bytes in this repository rather than from whatever mainnet looks like today.
 Re-sampling is `cargo run -p provenance-mainnet -- fetch 300 <name>` and takes
 roughly ten minutes against the public RPC, which rate-limits aggressively.
 
