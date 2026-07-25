@@ -238,14 +238,17 @@ provenance from the chain, reports an effective anonymity set per wallet, and
 tells you whether an observer can group them.
 
 It needs no crowd, no protocol adoption, and no agreement with the rest of this
-workspace. Pointed at eight wallets funded by one of the star-shaped funders
-found above, it reaches the conclusion unaided:
+workspace. Pointed at eight mainnet wallets that one of the star-shaped funders
+above solely paid, it reaches the conclusion unaided — the run below is verbatim
+output from 25 July 2026, abbreviated in the middle:
 
 ```
-| wallet             | funder             | funder's depositors | effective k |
-| 28fSHE9ssvZs...    | 6uqxgxbsVJWL...    | 0                   | 1.00        |
-| 28ftPmtJQpLc...    | 6uqxgxbsVJWL...    | 0                   | 1.00        |
-...
+| wallet                                       | funder                                       | funder's depositors | effective k |
+| 24eHXEdjtHnbcV7eC37FHCYntZLgBo2mc8ADmDg9TLr6 | 6uqxgxbsVJWLWJfKipEJ5n21Jq51nYba9aVSjnEdXSPy | 0                   | 1.00        |
+| 28ftPmtJQpLcDqZCszW3vyizAuVjjZYanprTFTzSBEYX | 6uqxgxbsVJWLWJfKipEJ5n21Jq51nYba9aVSjnEdXSPy | 0                   | 1.00        |
+| ... six more, identical                      |                                              |                     |             |
+
+**Mean effective anonymity set: 1.00** (min-entropy 1.00)
 
 | attack                | pairs scoring above zero | share |
 | direct-funder-jaccard | 28 of 28                 | 100%  |
@@ -254,6 +257,10 @@ found above, it reaches the conclusion unaided:
 **Linkable.** 100% of wallet pairs share a funding ancestor an observer can see.
 These addresses read as one operator.
 ```
+
+It reads live chain data, so a run today will differ as those accounts keep
+transacting. The verdict for this particular set will not: their funder has no
+depositors, and nothing about that can change retroactively.
 
 The report ends with what it cannot see — history beyond the most recent 100
 transactions per address, ancestors more than two hops back, and everything off

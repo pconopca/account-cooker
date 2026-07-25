@@ -171,10 +171,10 @@ length.
 ```
 $ cargo test --workspace
 provenance-core        9 passed
-provenance-eval       37 passed
-provenance-program    12 passed
-provenance-mainnet     9 passed
-                      -- 65 total, 0 failed
+provenance-eval       46 passed
+provenance-program    16 passed
+provenance-mainnet    12 passed
+                      -- 83 total, 0 failed
 $ cargo clippy --workspace --all-targets -- -D warnings
 clean, with pedantic lints enabled workspace-wide
 ```
@@ -191,15 +191,19 @@ Tests that encode the honest limits rather than the happy path:
   measure as chance, not as a perfect defence
 - `only_the_authority_can_settle` — a stranger with a valid, complete round in
   front of them still cannot take it
+- `account_creation_is_a_funding_edge` — the omission that had the extractor
+  reading two thirds of the graph
+- `several_funders_widen_the_candidate_set_rather_than_collapsing_it` — the
+  measure must not claim certainty it does not have
 
 ## 5. Two bugs the live run caught that unit tests could not
 
-Recorded because they are the argument for running against a real cluster. A
-third — unauthorised settlement — is in section 2, and a unit test suite alone
+Recorded because they are the argument for running against a real cluster. The
+two takeover paths in section 2 are a third and a fourth, and a unit suite alone
 would not have surfaced any of them.
 
-**Borsh trailing bytes.** The round account is sized for a full 32-depositor
-roster (1,054 bytes); the initial state encodes to 30. `try_from_slice` treats
+**Borsh trailing bytes.** The round account is sized for a full depositor roster
+(1,054 bytes at the time; 1,118 now); the initial state encodes to 30. `try_from_slice` treats
 the remaining zero bytes as corruption, so every deposit failed on chain with
 `MalformedRoundState` while all 12 unit tests passed — they round-trip exact-size
 buffers, which never exercises the mismatch. Fixed by deserializing from a
