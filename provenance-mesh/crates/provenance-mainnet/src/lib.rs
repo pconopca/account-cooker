@@ -16,6 +16,8 @@
 //! distinct depositors an account has, never overstate it. Every anonymity
 //! figure this crate reports is therefore a lower bound.
 
+pub mod scan;
+
 use std::collections::BTreeMap;
 use std::thread::sleep;
 use std::time::Duration;
@@ -77,7 +79,42 @@ impl std::fmt::Display for SampleError {
 
 impl std::error::Error for SampleError {}
 
-fn rpc_call(
+/// Send an arbitrary JSON-RPC body and return the parsed reply.
+///
+/// Used directly for batched requests, where the reply is an array and the
+/// per-call error handling belongs to the caller.
+///
+/// # Errors
+/// Returns [`SampleError`] when the endpoint cannot be reached or replies with
+/// something that is not JSON.
+pub fn rpc_raw(endpoint: &str, body: &serde_json::Value) -> Result<serde_json::Value, SampleError> {
+    // The public endpoint rate-limits aggressively and answers 429 for long
+    // stretches. Back off generously rather than hammering it, and give up
+    // loudly instead of silently returning a short sample that would quietly
+    // bias the measurement.
+    let mut delay = Duration::from_secs(1);
+    let mut last_error = String::new();
+    for _ in 0..7 {
+        match ureq::post(endpoint).send_json(body.clone()) {
+            Ok(response) => {
+                return response
+                    .into_json()
+                    .map_err(|error| SampleError::Malformed(error.to_string()))
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+        sleep(delay);
+        delay *= 2;
+    }
+    Err(SampleError::Rpc(last_error))
+}
+
+/// Perform a single JSON-RPC call, retrying transient failures.
+///
+/// # Errors
+/// Returns [`SampleError`] when the endpoint fails or reports an error for the
+/// call itself.
+pub fn rpc_call(
     endpoint: &str,
     method: &str,
     params: &serde_json::Value,
@@ -89,17 +126,11 @@ fn rpc_call(
         "params": params,
     });
 
-    // The public endpoint rate-limits aggressively; back off rather than
-    // hammering it, and give up loudly instead of silently returning a short
-    // sample that would quietly bias the measurement.
     let mut delay = Duration::from_millis(400);
     let mut last_error = String::new();
     for _ in 0..5 {
-        match ureq::post(endpoint).send_json(body.clone()) {
-            Ok(response) => {
-                let value: serde_json::Value = response
-                    .into_json()
-                    .map_err(|error| SampleError::Malformed(error.to_string()))?;
+        match rpc_raw(endpoint, &body) {
+            Ok(value) => {
                 if let Some(error) = value.get("error") {
                     last_error = error.to_string();
                     // Skipped slots are expected and not worth retrying.
@@ -182,49 +213,59 @@ fn collect_transfers(
     }
 }
 
-/// Extract transfers from one `getBlock` result.
+/// Extract transfers from one confirmed transaction.
+///
+/// Accepts the shape both `getBlock` and `getTransaction` produce: an object
+/// carrying `meta` and `transaction`.
 #[must_use]
-pub fn edges_from_block(block: &serde_json::Value, slot: u64) -> Vec<FundingEdge> {
+pub fn edges_from_transaction(transaction: &serde_json::Value, slot: u64) -> Vec<FundingEdge> {
     let mut edges = Vec::new();
-    let Some(transactions) = block
-        .get("transactions")
-        .and_then(serde_json::Value::as_array)
-    else {
+    // Failed transactions moved nothing and must not enter the graph.
+    if transaction
+        .pointer("/meta/err")
+        .is_some_and(|err| !err.is_null())
+    {
         return edges;
-    };
-    for transaction in transactions {
-        // Failed transactions moved nothing and must not enter the graph.
-        if transaction
-            .pointer("/meta/err")
-            .is_some_and(|err| !err.is_null())
-        {
-            continue;
-        }
-        // The fee payer is the first account key, and it always signs. It is
-        // the party that authorised this transfer, which is what decides
-        // whether a pooled payout is linkable back to a depositor.
-        let payer = transaction
-            .pointer("/transaction/message/accountKeys/0/pubkey")
-            .and_then(serde_json::Value::as_str)
-            .map(|key| WalletId(key.to_owned()));
+    }
+    // The fee payer is the first account key, and it always signs. It is the
+    // party that authorised this transfer, which is what decides whether a
+    // pooled payout is linkable back to a depositor.
+    let payer = transaction
+        .pointer("/transaction/message/accountKeys/0/pubkey")
+        .and_then(serde_json::Value::as_str)
+        .map(|key| WalletId(key.to_owned()));
 
-        if let Some(top) = transaction.pointer("/transaction/message/instructions") {
-            collect_transfers(top, slot, payer.as_ref(), &mut edges);
-        }
-        // CPI transfers are just as real as top-level ones, and a great deal of
-        // funding on Solana happens through a program rather than directly.
-        if let Some(inner) = transaction
-            .pointer("/meta/innerInstructions")
-            .and_then(serde_json::Value::as_array)
-        {
-            for group in inner {
-                if let Some(list) = group.get("instructions") {
-                    collect_transfers(list, slot, payer.as_ref(), &mut edges);
-                }
+    if let Some(top) = transaction.pointer("/transaction/message/instructions") {
+        collect_transfers(top, slot, payer.as_ref(), &mut edges);
+    }
+    // CPI transfers are just as real as top-level ones, and a great deal of
+    // funding on Solana happens through a program rather than directly.
+    if let Some(inner) = transaction
+        .pointer("/meta/innerInstructions")
+        .and_then(serde_json::Value::as_array)
+    {
+        for group in inner {
+            if let Some(list) = group.get("instructions") {
+                collect_transfers(list, slot, payer.as_ref(), &mut edges);
             }
         }
     }
     edges
+}
+
+/// Extract transfers from one `getBlock` result.
+#[must_use]
+pub fn edges_from_block(block: &serde_json::Value, slot: u64) -> Vec<FundingEdge> {
+    block
+        .get("transactions")
+        .and_then(serde_json::Value::as_array)
+        .map(|transactions| {
+            transactions
+                .iter()
+                .flat_map(|transaction| edges_from_transaction(transaction, slot))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Sample `blocks` consecutive slots starting at `start_slot`.

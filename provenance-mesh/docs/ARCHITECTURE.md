@@ -129,7 +129,15 @@ transactions and self-transfers are excluded.
 Samples are written to `data/<name>.json` and committed, so the analysis
 reproduces from bytes in the repository rather than from live network state.
 
-Its measurements are bounded by the window: an account funded before the window
+It also carries `scan`, which works the other way around: given a list of
+addresses, it fetches each one's recent transactions, then does the same for
+every account that funded them. Two hops, because the question is not the full
+ancestry of the money — it is whether the wallet's immediate funder was itself
+paid by a crowd. Transactions are requested in JSON-RPC batches to keep
+round-trips down, since the public endpoint rate-limits hard enough that a
+naive per-signature loop does not finish.
+
+Its window measurements are bounded by the window: an account funded before the window
 appears unfunded, and a busy account's depositor set is truncated. The bias is
 one-directional and every figure is therefore a lower bound. Two independent
 windows are sampled rather than one, because window *position* moves the

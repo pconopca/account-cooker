@@ -186,6 +186,42 @@ offers an anonymity set of one, and the program refuses it.
 roughly 20× cheaper, with no trusted setup and no ceremony — a different point
 on the trade-off curve, not a replacement for them.
 
+## Audit your own wallets
+
+The measurement above describes Solana. This answers the question an operator
+actually has:
+
+```bash
+cargo run -p provenance-mainnet -- scan my-fleet.txt
+```
+
+A newline-separated list of addresses you control. It reconstructs their funding
+provenance from the chain, reports an effective anonymity set per wallet, and
+tells you whether an observer can group them.
+
+It needs no crowd, no protocol adoption, and no agreement with the rest of this
+workspace. Pointed at eight wallets funded by one of the star-shaped funders
+found above, it reaches the conclusion unaided:
+
+```
+| wallet             | funder             | funder's depositors | effective k |
+| 28fSHE9ssvZs...    | 6uqxgxbsVJWL...    | 0                   | 1.00        |
+| 28ftPmtJQpLc...    | 6uqxgxbsVJWL...    | 0                   | 1.00        |
+...
+
+| attack                | pairs scoring above zero | share |
+| direct-funder-jaccard | 28 of 28                 | 100%  |
+| ancestor-jaccard      | 28 of 28                 | 100%  |
+
+**Linkable.** 100% of wallet pairs share a funding ancestor an observer can see.
+These addresses read as one operator.
+```
+
+The report ends with what it cannot see — history beyond the most recent 100
+transactions per address, ancestors more than two hops back, and everything off
+chain. A clean result is evidence of nothing found, not proof of nothing there,
+and the tool says so rather than leaving the reader to assume otherwise.
+
 ## Install
 
 Requires **Rust 1.89 or newer** — `solana-pubkey` sets that floor, and an older
@@ -214,7 +250,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 72 tests
+cargo test --workspace                                   # 74 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings
@@ -243,7 +279,7 @@ Design and rationale in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | `provenance-core` | funding-graph primitives: ancestors, funder sets, deposit multiplicity |
 | `provenance-eval` | attacks, entropy metrics, synthetic topologies, star/pool classification, provenance-breakage testing |
 | `provenance-program` | the on-chain round: native Rust, fail-closed |
-| `provenance-mainnet` | mainnet sampler and real-data analysis |
+| `provenance-mainnet` | mainnet sampler, real-data analysis, and the per-wallet audit |
 | `provenance-e2e` | live-cluster proof, including the negative cases |
 
 ## What this does not do

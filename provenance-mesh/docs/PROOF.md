@@ -109,7 +109,7 @@ $ cargo test --workspace
 provenance-core        9 passed
 provenance-eval       37 passed
 provenance-program    12 passed
-provenance-mainnet     7 passed
+provenance-mainnet     9 passed
                       -- 65 total, 0 failed
 $ cargo clippy --workspace --all-targets -- -D warnings
 clean, with pedantic lints enabled workspace-wide

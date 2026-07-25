@@ -3,6 +3,7 @@
 //! ```text
 //! cargo run -p provenance-mainnet -- fetch 300 window-a   # sample into data/window-a.json
 //! cargo run -p provenance-mainnet -- report window-a      # analyse that sample
+//! cargo run -p provenance-mainnet -- scan wallets.txt     # audit your own fleet
 //! ```
 
 use std::collections::BTreeMap;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use provenance_core::WalletId;
 use provenance_eval::anonymity::measure as measure_anonymity;
+use provenance_eval::attack::{AncestorJaccard, DirectFunderJaccard, PairwiseAttack};
 use provenance_eval::breakage::measure as measure_breakage;
 use provenance_eval::fleet::scan as scan_fleets;
 use provenance_mainnet::{current_slot, sample, Sample, DEFAULT_RPC};
@@ -191,6 +193,143 @@ fn report_breakage(graph: &provenance_core::FundingGraph) {
     }
 }
 
+/// Per-wallet provenance table. Returns the fleet report and how many wallets
+/// had no observable funder.
+fn print_wallet_provenance(
+    graph: &provenance_core::FundingGraph,
+    wallets: &[WalletId],
+) -> (provenance_eval::anonymity::AnonymityReport, usize) {
+    println!("## Per-wallet provenance\n");
+    println!("| wallet | funder | funder's depositors | effective k |");
+    println!("|---|---|---|---|");
+
+    let mut unfunded = 0_usize;
+    for wallet in wallets {
+        let funders = graph.direct_funders(wallet);
+        let Some(funder) = funders.iter().next() else {
+            unfunded += 1;
+            println!("| `{}` | none observed | - | - |", wallet.as_str());
+            continue;
+        };
+        println!(
+            "| `{}` | `{}` | {} | {:.2} |",
+            wallet.as_str(),
+            funder.as_str(),
+            graph.direct_funders(funder).len(),
+            measure_anonymity(graph, std::slice::from_ref(wallet)).mean_effective_k
+        );
+    }
+    (measure_anonymity(graph, wallets), unfunded)
+}
+
+/// Pairwise linkage table. Returns the strongest attack's hit rate.
+fn print_linkage(graph: &provenance_core::FundingGraph, wallets: &[WalletId]) -> f64 {
+    println!("\n## Can an observer link these wallets to each other?\n");
+    println!("| attack | pairs scoring above zero | share |");
+    println!("|---|---|---|");
+
+    let attacks: [&dyn PairwiseAttack; 2] = [&DirectFunderJaccard, &AncestorJaccard::new(4)];
+    let mut worst = 0.0_f64;
+    for attack in attacks {
+        let mut linked = 0_usize;
+        let mut pairs = 0_usize;
+        for (index, left) in wallets.iter().enumerate() {
+            for right in &wallets[index + 1..] {
+                pairs += 1;
+                if attack.score(graph, left, right) > 0.0 {
+                    linked += 1;
+                }
+            }
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let share = if pairs == 0 {
+            0.0
+        } else {
+            linked as f64 / pairs as f64
+        };
+        worst = worst.max(share);
+        println!(
+            "| {} | {} of {} | {:.0}% |",
+            attack.name(),
+            linked,
+            pairs,
+            share * 100.0
+        );
+    }
+    worst
+}
+
+fn print_verdict(worst: f64, report: &provenance_eval::anonymity::AnonymityReport) {
+    println!("\n## Verdict\n");
+    if worst >= 0.5 {
+        println!(
+            "**Linkable.** {:.0}% of wallet pairs share a funding ancestor an observer can see. \
+             These addresses read as one operator.",
+            worst * 100.0
+        );
+    } else if report.mean_effective_k < 2.0 {
+        println!(
+            "**Individually attributable.** Pairs are not obviously linked to each other, but each \
+             wallet traces to a single identifiable funder (effective k {:.2}).",
+            report.mean_effective_k
+        );
+    } else {
+        println!(
+            "**No linkage found in observed history.** Effective k {:.2}. Note the limits below \
+             before treating this as private.",
+            report.mean_effective_k
+        );
+    }
+
+    println!(
+        "\n### Limits of this audit\n\n\
+         - Only the most recent {} transactions per address are read. Older funding is invisible \
+         here and an observer with full history sees more.\n\
+         - Two hops. A shared ancestor further back is not reported.\n\
+         - On-chain only. Correlated IPs, RPC metadata, and timing are not covered.\n\
+         - A clean result is evidence of nothing found, not proof of nothing there.",
+        provenance_mainnet::scan::SIGNATURES_PER_ADDRESS
+    );
+}
+
+/// Audit a set of wallets the caller controls.
+///
+/// This is the question an operator actually has, and answering it needs no
+/// crowd, no adoption, and no agreement with anything else here: point it at
+/// your own addresses and it reports whether they are attributable.
+fn do_scan(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let endpoint = std::env::var("PROVENANCE_RPC").unwrap_or_else(|_| DEFAULT_RPC.to_owned());
+    let wallets = provenance_mainnet::scan::parse_wallet_list(&std::fs::read_to_string(path)?);
+    if wallets.len() < 2 {
+        eprintln!("need at least 2 wallets to say anything about linkage");
+        std::process::exit(2);
+    }
+    eprintln!("scanning {} wallets against {endpoint}", wallets.len());
+
+    let graph = provenance_mainnet::scan::scan_wallets(&endpoint, &wallets, |stage, at, total| {
+        eprintln!("  {stage} {at}/{total}");
+    })?;
+
+    println!("# Provenance audit\n");
+    println!("Wallets scanned: {}\n", wallets.len());
+
+    let (report, unfunded) = print_wallet_provenance(&graph, &wallets);
+    println!(
+        "\n**Mean effective anonymity set: {:.2}** (min-entropy {:.2})",
+        report.mean_effective_k, report.mean_effective_k_min
+    );
+    if unfunded > 0 {
+        println!(
+            "\n{unfunded} wallet(s) had no inbound transfer in recent history; they are excluded \
+             from the linkage test below rather than counted as private."
+        );
+    }
+
+    let worst = print_linkage(&graph, &wallets);
+    print_verdict(worst, &report);
+    Ok(())
+}
+
 fn do_report(name: &str) {
     let Some(sampled) = load_sample(name) else {
         eprintln!("no cached sample named {name}; run `fetch` first");
@@ -307,8 +446,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             do_report(name);
             Ok(())
         }
+        Some("scan") => {
+            let Some(path) = args.get(1) else {
+                eprintln!("usage: provenance-mainnet scan <wallet-list-file>");
+                std::process::exit(2);
+            };
+            do_scan(path)
+        }
         _ => {
-            eprintln!("usage: provenance-mainnet <fetch [slots] | report>");
+            eprintln!(
+                "usage: provenance-mainnet <fetch [slots] [name] | report [name] | scan <file>>"
+            );
             std::process::exit(2);
         }
     }
