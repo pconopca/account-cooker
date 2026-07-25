@@ -17,6 +17,8 @@ pub enum ProvenanceInstruction {
     OpenRound {
         /// Distinguishes concurrent rounds opened by the same authority.
         nonce: u64,
+        /// Hash of the recipient set this round is allowed to pay.
+        commitment: [u8; 32],
         /// Uniform payout size in lamports.
         denomination: u64,
         /// Distinct funders required before any payout.
@@ -50,6 +52,23 @@ fn borsh_instruction(
     }
 }
 
+/// Commitment to the exact set of recipients a round will pay.
+///
+/// Recipients must be in strictly ascending order. That gives the set one
+/// canonical encoding, so the commitment is unambiguous, and it rules out
+/// duplicates without a separate check.
+///
+/// Returns `None` if the order is violated, which is the caller's bug rather
+/// than a runtime condition.
+#[must_use]
+pub fn recipient_commitment(recipients: &[Pubkey]) -> Option<[u8; 32]> {
+    if recipients.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return None;
+    }
+    let refs: Vec<&[u8]> = recipients.iter().map(Pubkey::as_ref).collect();
+    Some(solana_sha256_hasher::hashv(&refs).to_bytes())
+}
+
 /// Derive a round's address and bump.
 #[must_use]
 pub fn round_address(program_id: &Pubkey, authority: &Pubkey, nonce: u64) -> (Pubkey, u8) {
@@ -65,6 +84,7 @@ pub fn open_round(
     program_id: &Pubkey,
     authority: &Pubkey,
     nonce: u64,
+    commitment: [u8; 32],
     denomination: u64,
     k_min: u32,
     capacity: u32,
@@ -74,6 +94,7 @@ pub fn open_round(
         program_id,
         &ProvenanceInstruction::OpenRound {
             nonce,
+            commitment,
             denomination,
             k_min,
             capacity,
@@ -131,6 +152,7 @@ mod tests {
     fn instructions_round_trip() {
         let original = ProvenanceInstruction::OpenRound {
             nonce: 9,
+            commitment: [7; 32],
             denomination: 1_000_000,
             k_min: 4,
             capacity: 16,
@@ -140,6 +162,32 @@ mod tests {
             ProvenanceInstruction::try_from_slice(&encoded).expect("decodes"),
             original
         );
+    }
+
+    #[test]
+    fn commitment_requires_ascending_order_and_rejects_duplicates() {
+        let mut keys: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        keys.sort();
+        assert!(recipient_commitment(&keys).is_some());
+
+        let mut reversed = keys.clone();
+        reversed.reverse();
+        assert!(recipient_commitment(&reversed).is_none());
+
+        let duplicated = vec![keys[0], keys[0]];
+        assert!(recipient_commitment(&duplicated).is_none());
+    }
+
+    #[test]
+    fn commitment_changes_with_the_set() {
+        let mut keys: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        keys.sort();
+        let baseline = recipient_commitment(&keys).expect("ordered");
+
+        let mut swapped = keys.clone();
+        swapped[3] = Pubkey::new_unique();
+        swapped.sort();
+        assert_ne!(recipient_commitment(&swapped).expect("ordered"), baseline);
     }
 
     #[test]

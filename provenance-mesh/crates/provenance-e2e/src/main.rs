@@ -9,6 +9,7 @@
 //! 3. A round whose deposits all come from one key is refused on chain, because
 //!    it would deliver no anonymity while appearing full.
 //! 4. A stranger cannot settle a funded round to recipients of their choosing.
+//! 5. Nor can the authority: the recipient set is committed before any deposit.
 //!
 //! The negative cases matter as much as the positive one: they are what
 //! separate an enforced guarantee from a documented intention.
@@ -28,7 +29,9 @@ use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 
-use provenance_program::instruction::{deposit, open_round, round_address, settle};
+use provenance_program::instruction::{
+    deposit, open_round, recipient_commitment, round_address, settle,
+};
 
 /// One denomination. Above the rent-exempt floor for an empty account, so a
 /// recipient survives its payout and its balance can be checked afterwards.
@@ -88,13 +91,30 @@ impl Runner {
         Ok(depositors)
     }
 
-    fn open(&self, nonce: u64, k_min: u32, capacity: u32) -> Result<(Pubkey, String), String> {
+    /// Recipients, in the canonical ascending order the commitment requires.
+    fn fresh_recipients(count: u32) -> Vec<Pubkey> {
+        let mut keys: Vec<Pubkey> = (0..count).map(|_| Keypair::new().pubkey()).collect();
+        keys.sort();
+        keys
+    }
+
+    /// Open a round committed to `recipients`, which is fixed before any deposit.
+    fn open(
+        &self,
+        nonce: u64,
+        k_min: u32,
+        capacity: u32,
+        recipients: &[Pubkey],
+    ) -> Result<(Pubkey, String), String> {
+        let commitment =
+            recipient_commitment(recipients).ok_or("recipients must be strictly ascending")?;
         let (round, _) = round_address(&self.program, &self.payer.pubkey(), nonce);
         let signature = self.send(
             &[open_round(
                 &self.program,
                 &self.payer.pubkey(),
                 nonce,
+                commitment,
                 DENOMINATION,
                 k_min,
                 capacity,
@@ -107,7 +127,8 @@ impl Runner {
 
 fn scenario_happy_path(runner: &Runner, nonce: u64) -> Result<(), String> {
     println!("\n## Scenario 1 - a full round settles\n");
-    let (round, open_signature) = runner.open(nonce, K_MIN, CAPACITY)?;
+    let recipients = Runner::fresh_recipients(CAPACITY);
+    let (round, open_signature) = runner.open(nonce, K_MIN, CAPACITY, &recipients)?;
     println!("| step | detail | signature |");
     println!("|---|---|---|");
     println!("| open round | `{round}` | `{open_signature}` |");
@@ -127,7 +148,6 @@ fn scenario_happy_path(runner: &Runner, nonce: u64) -> Result<(), String> {
         );
     }
 
-    let recipients: Vec<Pubkey> = (0..CAPACITY).map(|_| Keypair::new().pubkey()).collect();
     let signature = runner.send(
         &[settle(
             &runner.program,
@@ -163,7 +183,8 @@ fn scenario_happy_path(runner: &Runner, nonce: u64) -> Result<(), String> {
 
 fn scenario_settle_too_early(runner: &Runner, nonce: u64) -> Result<(), String> {
     println!("\n## Scenario 2 - settlement before the round fills is refused\n");
-    let (round, _) = runner.open(nonce, K_MIN, CAPACITY)?;
+    let recipients = Runner::fresh_recipients(CAPACITY);
+    let (round, _) = runner.open(nonce, K_MIN, CAPACITY, &recipients)?;
     let depositors = runner.fund_depositors(2)?;
     for depositor in &depositors {
         runner.send(
@@ -171,7 +192,6 @@ fn scenario_settle_too_early(runner: &Runner, nonce: u64) -> Result<(), String> 
             &[&runner.payer, depositor],
         )?;
     }
-    let recipients: Vec<Pubkey> = (0..2).map(|_| Keypair::new().pubkey()).collect();
     match runner.send(
         &[settle(
             &runner.program,
@@ -200,7 +220,8 @@ fn scenario_single_depositor(runner: &Runner, nonce: u64) -> Result<(), String> 
     println!("\n## Scenario 3 - a round filled by one key is refused\n");
     // Capacity equals k_min, so one key can complete the deposits alone. The
     // round then looks full while offering an anonymity set of exactly one.
-    let (round, _) = runner.open(nonce, K_MIN, K_MIN)?;
+    let recipients = Runner::fresh_recipients(K_MIN);
+    let (round, _) = runner.open(nonce, K_MIN, K_MIN, &recipients)?;
     let solo = Keypair::new();
     runner.send(
         &[solana_system_interface::instruction::transfer(
@@ -221,7 +242,6 @@ fn scenario_single_depositor(runner: &Runner, nonce: u64) -> Result<(), String> 
         solo.pubkey()
     );
 
-    let recipients: Vec<Pubkey> = (0..K_MIN).map(|_| Keypair::new().pubkey()).collect();
     match runner.send(
         &[settle(
             &runner.program,
@@ -251,7 +271,8 @@ fn scenario_unauthorized_settler(runner: &Runner, nonce: u64) -> Result<(), Stri
     // Every other invariant is satisfied: the round is complete and has enough
     // distinct funders. Only the authority check stands between an outsider and
     // every deposit in the pool.
-    let (round, _) = runner.open(nonce, K_MIN, CAPACITY)?;
+    let recipients = Runner::fresh_recipients(CAPACITY);
+    let (round, _) = runner.open(nonce, K_MIN, CAPACITY, &recipients)?;
     let depositors = runner.fund_depositors(CAPACITY as usize)?;
     for depositor in &depositors {
         runner.send(
@@ -274,7 +295,7 @@ fn scenario_unauthorized_settler(runner: &Runner, nonce: u64) -> Result<(), Stri
         stranger.pubkey()
     );
 
-    let stolen: Vec<Pubkey> = (0..CAPACITY).map(|_| Keypair::new().pubkey()).collect();
+    let stolen = Runner::fresh_recipients(CAPACITY);
     match runner.send(
         &[settle(
             &runner.program,
@@ -294,6 +315,60 @@ fn scenario_unauthorized_settler(runner: &Runner, nonce: u64) -> Result<(), Stri
                 Ok(())
             } else {
                 Err(format!("expected custom error 0xe, got: {error}"))
+            }
+        }
+    }
+}
+
+fn scenario_authority_cannot_redirect(runner: &Runner, nonce: u64) -> Result<(), String> {
+    println!("\n## Scenario 5 - the authority cannot redirect the payout\n");
+    // The remaining question after scenario 4: the authority is trusted to
+    // settle, so what stops it settling to itself? The commitment does. It was
+    // fixed before the first deposit landed, and a depositor can check it
+    // before paying in.
+    let promised = Runner::fresh_recipients(CAPACITY);
+    let (round, _) = runner.open(nonce, K_MIN, CAPACITY, &promised)?;
+    let depositors = runner.fund_depositors(CAPACITY as usize)?;
+    for depositor in &depositors {
+        runner.send(
+            &[deposit(&runner.program, &depositor.pubkey(), &round)],
+            &[&runner.payer, depositor],
+        )?;
+    }
+    println!("Round committed to a recipient set and funded by {CAPACITY} distinct depositors.");
+    println!("The authority itself now attempts to settle to a different set.");
+
+    let substituted = Runner::fresh_recipients(CAPACITY);
+    match runner.send(
+        &[settle(
+            &runner.program,
+            &runner.payer.pubkey(),
+            &round,
+            &substituted,
+        )],
+        &[&runner.payer],
+    ) {
+        Ok(signature) => Err(format!(
+            "the authority redirected the payout, which the commitment exists to prevent: {signature}"
+        )),
+        Err(error) => {
+            println!("Refused on chain, as required: `{error}`");
+            // RecipientSetMismatch is custom error 15 = 0xf.
+            if error.contains("0xf") {
+                // And the promised set still settles.
+                let signature = runner.send(
+                    &[settle(
+                        &runner.program,
+                        &runner.payer.pubkey(),
+                        &round,
+                        &promised,
+                    )],
+                    &[&runner.payer],
+                )?;
+                println!("\nThe committed set settles normally: `{signature}`");
+                Ok(())
+            } else {
+                Err(format!("expected custom error 0xf, got: {error}"))
             }
         }
     }
@@ -382,6 +457,10 @@ fn main() {
         (
             "unauthorized settler refused",
             scenario_unauthorized_settler(&runner, nonce_base + 3),
+        ),
+        (
+            "authority cannot redirect",
+            scenario_authority_cannot_redirect(&runner, nonce_base + 4),
         ),
     ];
 

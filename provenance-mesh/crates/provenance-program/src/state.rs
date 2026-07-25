@@ -20,6 +20,7 @@ pub const MAX_DEPOSITORS: usize = 32;
 /// Serialized size of a [`Round`] with a full depositor roster.
 pub const ROUND_ACCOUNT_LEN: usize = 1  // bump
     + 32                                // authority
+    + 32                                // recipient commitment
     + 1                                 // settling flag
     + 8                                 // denomination
     + 4                                 // k_min
@@ -46,6 +47,21 @@ pub struct Round {
     /// the chain still records no association, which is what an observer reads.
     /// It does make the authority trusted for *delivery* — see `THREAT_MODEL.md`.
     pub authority: Pubkey,
+    /// Hash of the recipient set, fixed before any deposit is accepted.
+    ///
+    /// This is what makes the round non-custodial. Without it the authority
+    /// picks recipients at settlement time and can name itself, so depositors
+    /// are trusting it with their funds exactly as they would trust a
+    /// custodian. With it the authority has no discretion left: it committed to
+    /// a destination set before anyone paid in, and settlement accepts only
+    /// that set.
+    ///
+    /// A depositor can therefore check the published commitment against the
+    /// list it was promised *before* depositing, rather than hoping afterwards.
+    ///
+    /// It leaks nothing: the hash is opaque, and the recipients become public
+    /// at settlement anyway. What stays absent is which deposit paid for which.
+    pub recipient_commitment: [u8; 32],
     /// Whether settlement has started, freezing the anonymity set.
     pub settling: bool,
     /// Uniform payout size in lamports.
@@ -70,6 +86,7 @@ impl Round {
     pub fn new(
         bump: u8,
         authority: Pubkey,
+        recipient_commitment: [u8; 32],
         denomination: u64,
         k_min: u32,
         capacity: u32,
@@ -91,6 +108,7 @@ impl Round {
         Ok(Self {
             bump,
             authority,
+            recipient_commitment,
             settling: false,
             denomination,
             k_min,
@@ -151,15 +169,14 @@ impl Round {
         if self.achieved_k() < self.k_min as usize {
             return Err(ProvenanceError::AnonymitySetTooSmall);
         }
-        let next = self
-            .settled_count
-            .checked_add(payouts)
-            .ok_or(ProvenanceError::PayoutExceedsCapacity)?;
-        if next > self.capacity {
+        // The commitment covers the whole recipient set, so the whole set has
+        // to be presented at once. Partial settlement would let the authority
+        // reveal a prefix and abandon the rest.
+        if payouts != self.capacity || self.settled_count != 0 {
             return Err(ProvenanceError::PayoutExceedsCapacity);
         }
         self.settling = true;
-        self.settled_count = next;
+        self.settled_count = payouts;
         Ok(())
     }
 
@@ -179,7 +196,7 @@ mod tests {
     }
 
     fn round() -> Round {
-        Round::new(255, authority(), 1_000_000, 3, 6).expect("valid configuration")
+        Round::new(255, authority(), [9; 32], 1_000_000, 3, 6).expect("valid configuration")
     }
 
     #[test]
@@ -204,17 +221,17 @@ mod tests {
     #[test]
     fn degenerate_configurations_are_rejected() {
         assert_eq!(
-            Round::new(255, authority(), 0, 3, 6),
+            Round::new(255, authority(), [9; 32], 0, 3, 6),
             Err(ProvenanceError::ZeroDenomination)
         );
         for k in [0, 1] {
             assert_eq!(
-                Round::new(255, authority(), 1_000, k, 6),
+                Round::new(255, authority(), [9; 32], 1_000, k, 6),
                 Err(ProvenanceError::DegenerateAnonymitySet)
             );
         }
         assert_eq!(
-            Round::new(255, authority(), 1_000, 33, 64),
+            Round::new(255, authority(), [9; 32], 1_000, 33, 64),
             Err(ProvenanceError::TooManyDepositors)
         );
     }
@@ -224,10 +241,10 @@ mod tests {
         // Four deposits can never produce five distinct funders, so the round
         // would take money and then be unable to ever settle.
         assert_eq!(
-            Round::new(255, authority(), 1_000, 5, 4),
+            Round::new(255, authority(), [9; 32], 1_000, 5, 4),
             Err(ProvenanceError::InvalidCapacity)
         );
-        assert!(Round::new(255, authority(), 1_000, 5, 5).is_ok());
+        assert!(Round::new(255, authority(), [9; 32], 1_000, 5, 5).is_ok());
     }
 
     #[test]
@@ -274,23 +291,30 @@ mod tests {
     }
 
     #[test]
-    fn payouts_may_be_batched_but_never_exceed_deposits() {
+    fn settlement_is_all_or_nothing() {
+        // The commitment covers the whole recipient set, so a partial payout
+        // would let the authority reveal a prefix and walk away from the rest.
         let mut round = round();
         for index in 0..6_u8 {
             round
                 .record_deposit(Pubkey::new_from_array([index; 32]))
                 .expect("deposit accepted");
         }
-        round
-            .authorize_payouts(&authority(), 4)
-            .expect("first batch");
-        round
-            .authorize_payouts(&authority(), 2)
-            .expect("second batch");
-        assert_eq!(round.settled_count, 6);
-        // Value conservation: not one payout more than the round took in.
         assert_eq!(
-            round.authorize_payouts(&authority(), 1),
+            round.authorize_payouts(&authority(), 4),
+            Err(ProvenanceError::PayoutExceedsCapacity)
+        );
+        assert_eq!(
+            round.authorize_payouts(&authority(), 7),
+            Err(ProvenanceError::PayoutExceedsCapacity)
+        );
+        round
+            .authorize_payouts(&authority(), 6)
+            .expect("full settlement");
+        assert_eq!(round.settled_count, 6);
+        // And it cannot be replayed.
+        assert_eq!(
+            round.authorize_payouts(&authority(), 6),
             Err(ProvenanceError::PayoutExceedsCapacity)
         );
     }
@@ -343,9 +367,7 @@ mod tests {
                 .record_deposit(Pubkey::new_from_array([index; 32]))
                 .expect("deposit accepted");
         }
-        round
-            .authorize_payouts(&authority(), 1)
-            .expect("first batch");
+        round.authorize_payouts(&authority(), 6).expect("settled");
         // Late deposits cannot join a round whose payouts are already visible.
         assert_eq!(
             round.record_deposit(Pubkey::new_from_array([50; 32])),

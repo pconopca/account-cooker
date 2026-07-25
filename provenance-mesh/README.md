@@ -161,6 +161,9 @@ cannot reconstruct — which deposit paid for which recipient.
 - uniform denominations, so payouts stay exchangeable
 - a floor of *distinct* depositors before any payout
 - conservation of value: a round pays out exactly what it took in
+- **the recipient set, committed before the first deposit lands** — the
+  authority coordinates the round but has no discretion over where the money
+  goes, and a depositor can verify the commitment before paying in
 - fail-closed refusal: a round that cannot deliver its advertised anonymity
   aborts rather than settling with a silently weaker guarantee
 
@@ -170,10 +173,11 @@ Program [`8xrL8baL63gADaxWkDCWhnc8EceAKmq6oKmBtfmqSQ39`](https://explorer.solana
 
 | scenario | result | compute units |
 |---|---|---|
-| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,789 |
-| settlement before the round fills | refused, `0x6` | 1,335 |
-| round filled to capacity by one key | refused, `0x7` | 1,699 |
-| a stranger tries to settle a funded round | refused, `0xe` | 2,859 |
+| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,906 |
+| settlement before the round fills | refused, `0x6` | 1,746 |
+| round filled to capacity by one key | refused, `0x7` | 2,612 |
+| a stranger tries to settle a funded round | refused, `0xe` | 2,906 |
+| the authority tries to redirect the payout | refused, `0xf` | 3,424 |
 
 Every signature is in [`docs/PROOF-devnet.md`](docs/PROOF-devnet.md). After
 settlement the round account holds exactly its rent and nothing more — value
@@ -183,13 +187,17 @@ The negative cases carry the weight. Scenario 3 is the failure that would
 otherwise be silent: a round that looks full but was filled by a single key
 offers an anonymity set of one, and the program refuses it.
 
-Scenario 4 exists because an audit of this workspace found that it did not.
-Settlement originally checked only that the caller had signed, so any stranger
-could drain a funded round to addresses of their choosing — value conserved,
-ownership not. It was demonstrated on devnet, then fixed and demonstrated
-refused. Both transactions are in [`docs/PROOF.md`](docs/PROOF.md).
+Scenarios 4 and 5 exist because an audit of this workspace found two ways to
+take the pool. Settlement originally checked only that the caller had *signed*,
+so any stranger could drain a funded round — demonstrated on devnet, then fixed.
+Requiring the round's authority closed that but left the authority itself able
+to settle to addresses of its own, which would have made this pool custodial in
+exactly the way the pools it criticises are. The recipient set is now committed
+before the first deposit, and both attacks are refused on chain. Every
+transaction, including the successful exploit against the vulnerable build, is
+in [`docs/PROOF.md`](docs/PROOF.md).
 
-**Cost.** 4,789 CU to settle eight payouts. The Groth16 approaches in
+**Cost.** 4,906 CU to settle eight payouts. The Groth16 approaches in
 `mirror-pool` report ~98k–108k CU to verify one membership proof. This is
 roughly 20× cheaper, with no trusted setup and no ceremony — a different point
 on the trade-off curve, not a replacement for them.
@@ -258,7 +266,7 @@ instruction` failure that does not name the cause.
 ## Reproduce
 
 ```bash
-cargo test --workspace                                   # 76 tests
+cargo test --workspace                                   # 78 tests
 cargo clippy --workspace --all-targets -- -D warnings    # clean, pedantic
 
 cargo run -p provenance-mainnet -- report window-a       # mainnet findings
@@ -303,10 +311,9 @@ See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full treatment. In sh
   cost this protocol does not yet impose.
 - **It is structural, not cryptographic.** There is no proof of unlinkability
   here, unlike the ZK constructions in `mirror-pool`.
-- **Settlement is trusted for delivery.** The round's authority names the
-  recipients. It cannot forge the anonymity set or take more than the round
-  holds, but it can pay the wrong people. Committing to the recipient set at
-  open time would remove that, and is not built.
+- **Settlement is all-or-nothing.** The commitment covers the whole recipient
+  set, so the set has to be presented in one transaction. That caps a round at
+  roughly sixty recipients.
 - **It stops at the chain boundary.** Correlated IPs or RPC metadata defeat all
   of it.
 

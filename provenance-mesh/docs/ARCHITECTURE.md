@@ -83,7 +83,7 @@ one the current agave line resolves to. Granular crates avoid it.
 ### Round lifecycle
 
 ```
-open_round(nonce, denomination, k_min, capacity)
+open_round(nonce, commitment, denomination, k_min, capacity)
     -> creates the round PDA, seeds ["round", authority, nonce]
     -> validates before allocating, so a bad config costs the caller nothing
 
@@ -91,21 +91,26 @@ deposit  x capacity
     -> each depositor transfers exactly `denomination`
     -> records the depositor if new; refuses once full or once settling
 
-settle(recipients[])
+settle(recipients[])            -- the whole set, in ascending order
     -> refuses unless the caller is the round's authority  (0xe)
     -> refuses unless deposits are complete                (0x6)
     -> refuses below the distinct-depositor floor          (0x7)
-    -> refuses duplicates, self-payment, rent breach
+    -> refuses a set that does not hash to the commitment  (0xf)
+    -> refuses out-of-order or duplicate recipients, rent breach
     -> pays `denomination` to each recipient
 ```
 
-Settlement may be batched across several calls; `settled_count` is capped at
-`capacity`, so a round can never pay out more than it took in.
+Settlement is all-or-nothing. The commitment covers the whole recipient set, so
+a partial payout would let the authority reveal a prefix and abandon the rest;
+`capacity` recipients must be presented in one transaction, which caps a round
+at roughly sixty.
 
-The authority check is first, and it is deliberately first: a refused settlement
-must move no lamports and leave no trace in the round's state. It exists because
-without it any signer could settle a funded round to addresses of their own —
-found, demonstrated on devnet, and fixed. See `PROOF.md`.
+Ascending order is required rather than merely checked for duplicates. That
+gives the set one canonical encoding, so the commitment is unambiguous, and it
+rules out duplicates in the same pass.
+
+Both checks exist because an audit found the pool takeable twice over: first by
+any signer, then by its own authority. See `PROOF.md`.
 
 ### Why the mapping is absent rather than hidden
 
@@ -120,7 +125,7 @@ there is no unlinkability proof, unlike the Groth16 constructions in
 
 ### Account layout
 
-`Round` is borsh-encoded into a fixed 1,086-byte account sized for a full
+`Round` is borsh-encoded into a fixed 1,118-byte account sized for a full
 32-depositor roster. Since the encoded state is usually shorter, reads use
 `BorshDeserialize::deserialize` from a cursor rather than `try_from_slice`, which
 rejects trailing bytes and caused every on-chain deposit to fail until it was

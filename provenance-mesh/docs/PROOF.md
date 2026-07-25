@@ -29,31 +29,32 @@ Program: [`8xrL8baL63gADaxWkDCWhnc8EceAKmq6oKmBtfmqSQ39`](https://explorer.solan
 
 | scenario | outcome | compute units |
 |---|---|---|
-| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,789 |
-| settlement before deposits complete | refused, `0x6` `DepositsIncomplete` | 1,335 |
-| round filled to capacity by one key | refused, `0x7` `AnonymitySetTooSmall` | 1,699 |
-| settlement by a stranger | refused, `0xe` `UnauthorizedSettler` | 2,859 |
+| full round settles — 8 distinct depositors, 8 payouts | PASS | 4,906 |
+| settlement before deposits complete | refused, `0x6` `DepositsIncomplete` | 1,746 |
+| round filled to capacity by one key | refused, `0x7` `AnonymitySetTooSmall` | 2,612 |
+| settlement by a stranger | refused, `0xe` `UnauthorizedSettler` | 2,906 |
+| the authority redirecting the payout | refused, `0xf` `RecipientSetMismatch` | 3,424 |
 
-Round account [`EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt`](https://explorer.solana.com/address/EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt?cluster=devnet)
+Round account [`82h7K8YHrfk8RehXLgKDbDTyvZq7trm8CBGnfhNg1rCA`](https://explorer.solana.com/address/82h7K8YHrfk8RehXLgKDbDTyvZq7trm8CBGnfhNg1rCA?cluster=devnet)
 
-Settlement [`48mNCQbbgiET3KcqfHJx3HVYYH8dBppTf5V3JPRsCEvnPc5R91GV41QJHaGveadeRbwvPDjwZYYH1pPUAheHPuav`](https://explorer.solana.com/tx/48mNCQbbgiET3KcqfHJx3HVYYH8dBppTf5V3JPRsCEvnPc5R91GV41QJHaGveadeRbwvPDjwZYYH1pPUAheHPuav?cluster=devnet)
-— executed in slot 478873841.
+Settlement [`2wLYhrZuxtgEnUAiUJC7FeAMqnaXdq9CSuXuaFHR7MdjaxR2GQo8jFdZMbbjQvYS9QuKXMDWQDpWr5bamYMvxJGM`](https://explorer.solana.com/tx/2wLYhrZuxtgEnUAiUJC7FeAMqnaXdq9CSuXuaFHR7MdjaxR2GQo8jFdZMbbjQvYS9QuKXMDWQDpWr5bamYMvxJGM?cluster=devnet)
+— executed in slot 478875561.
 
-Every signature for all four scenarios is in [`PROOF-devnet.md`](PROOF-devnet.md).
+Every signature for all five scenarios is in [`PROOF-devnet.md`](PROOF-devnet.md).
 
 ### Value conservation, in on-chain state
 
 After settling 8 payouts of 1,000,000 lamports each, the round account holds
-**0.00844944 SOL** — exactly the rent-exempt minimum for its 1,086 bytes, and
+**0.00867216 SOL** — exactly the rent-exempt minimum for its 1,118 bytes, and
 nothing more. Every deposited lamport left the pool. The client independently
 checks that all 8 recipients hold exactly one denomination before reporting PASS.
 
 ```bash
-solana account EUNt2kmgqH9i4BAEforEqvGfnttMbZPZoeQ2jznBVAQt --url devnet
-solana rent 1086 --url devnet    # 0.00844944 SOL
+solana account 82h7K8YHrfk8RehXLgKDbDTyvZq7trm8CBGnfhNg1rCA --url devnet
+solana rent 1118 --url devnet    # 0.00867216 SOL
 ```
 
-### A vulnerability this repository's own audit found, and the proof it is closed
+### Two ways to take the pool, found by this repository's own audit
 
 Settlement originally verified only that its caller had *signed*. It never
 compared the caller to anything, and the round stored no authority. Any stranger
@@ -69,15 +70,33 @@ program on devnet:
   — a stranger drains a round it never contributed to.
 - **Refused**, on the fixed build: scenario 4 above, custom error `0xe`.
 
-The fix stores the opening account as the round's `authority` and requires the
-settler to match it. That trades "anyone can steal" for "the coordinator the
-participants already chose could misdeliver" — the same class of assumption the
-threat model already documents for relayers, and it is now written there
-explicitly. Committing to a hash of the recipient set at open time would remove
-even that, and is listed as future work rather than claimed.
+The first fix stored the opening account as the round's `authority` and required
+the settler to match. That closed the stranger's path — and left a worse one.
 
-Two regression tests lock it: `only_the_authority_can_settle` and
-`a_depositor_is_not_automatically_a_settler`.
+**The authority could still settle to itself.** Nothing bound the recipients to
+anything: a coordinator could open a round, wait for `k` strangers to deposit,
+and pay the whole pool to addresses it controlled. That would have made this
+pool custodial in precisely the way it criticises the working pools on mainnet
+for being, which is not a bug in the code so much as a contradiction of the
+claim the repository is built on.
+
+The recipient set is now committed at open time — a hash of the set in strictly
+ascending order, fixed before the first deposit is accepted. Settlement
+recomputes it over the accounts actually presented and refuses anything else, so
+the authority coordinates the round and decides nothing. A depositor can check
+the published commitment against the list it was promised *before* paying in.
+
+- **Refused**, authority substituting recipients: scenario 5 above, `0xf`.
+- **Accepted**, the committed set, in the same round:
+  [`LW8NgCRNsbk3KEgC1ek8HiSKmLbt3g2vLimPUPrhCFKRtLHW5w9J8PGZHdwf3Y9gfcf33u3xGrpkWXra5HHQUU9`](https://explorer.solana.com/tx/LW8NgCRNsbk3KEgC1ek8HiSKmLbt3g2vLimPUPrhCFKRtLHW5w9J8PGZHdwf3Y9gfcf33u3xGrpkWXra5HHQUU9?cluster=devnet)
+
+Because the commitment covers the whole set, settlement is all-or-nothing: a
+partial payout would let the authority reveal a prefix and abandon the rest.
+That caps a round at roughly sixty recipients, which is the cost of the fix.
+
+Four regression tests lock it: `only_the_authority_can_settle`,
+`a_depositor_is_not_automatically_a_settler`, `settlement_is_all_or_nothing`,
+and `commitment_requires_ascending_order_and_rejects_duplicates`.
 
 ## 3. Real mainnet measurement
 

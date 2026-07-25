@@ -44,6 +44,11 @@ pub enum ProvenanceError {
     /// of their choosing: the accounting would still balance, but the deposits
     /// would leave to the wrong people.
     UnauthorizedSettler = 14,
+    /// The recipients presented are not the set the round committed to.
+    ///
+    /// The commitment is fixed before the first deposit, so this is the check
+    /// that leaves the authority no discretion over where the money goes.
+    RecipientSetMismatch = 15,
 }
 
 impl From<ProvenanceError> for ProgramError {

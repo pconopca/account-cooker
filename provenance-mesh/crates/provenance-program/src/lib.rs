@@ -70,10 +70,19 @@ pub fn process_instruction(
     {
         ProvenanceInstruction::OpenRound {
             nonce,
+            commitment,
             denomination,
             k_min,
             capacity,
-        } => open_round(program_id, accounts, nonce, denomination, k_min, capacity),
+        } => open_round(
+            program_id,
+            accounts,
+            nonce,
+            commitment,
+            denomination,
+            k_min,
+            capacity,
+        ),
         ProvenanceInstruction::Deposit => deposit(program_id, accounts),
         ProvenanceInstruction::Settle => settle(program_id, accounts),
     }
@@ -108,6 +117,7 @@ fn open_round(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     nonce: u64,
+    commitment: [u8; 32],
     denomination: u64,
     k_min: u32,
     capacity: u32,
@@ -132,7 +142,14 @@ fn open_round(
 
     // Validate before creating the account, so a misconfigured round costs the
     // caller nothing and cannot strand rent in an unusable pool.
-    let round = Round::new(bump, *authority.key, denomination, k_min, capacity)?;
+    let round = Round::new(
+        bump,
+        *authority.key,
+        commitment,
+        denomination,
+        k_min,
+        capacity,
+    )?;
 
     let rent = Rent::get()?.minimum_balance(ROUND_ACCOUNT_LEN);
     invoke_signed_create(
@@ -237,18 +254,27 @@ fn settle(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     // leave no trace in the round's state.
     round.authorize_payouts(settler.key, payouts)?;
 
-    // Reject duplicates and self-payment before moving any lamports: a partial
-    // settlement that aborts halfway would leave the round unusable.
-    for (index, recipient) in recipients.iter().enumerate() {
+    // The recipient set was fixed before any deposit landed. Recompute the
+    // commitment over what was actually presented and refuse anything else:
+    // this is what stops the authority naming itself at settlement time.
+    //
+    // Ascending order is required, which also rules out duplicates.
+    for pair in recipients.windows(2) {
+        if pair[0].key >= pair[1].key {
+            return Err(ProvenanceError::DuplicateRecipient.into());
+        }
+    }
+    for recipient in recipients {
         if recipient.key == round_account.key {
             return Err(ProvenanceError::RecipientIsRound.into());
         }
-        if recipients[..index]
-            .iter()
-            .any(|earlier| earlier.key == recipient.key)
-        {
-            return Err(ProvenanceError::DuplicateRecipient.into());
-        }
+    }
+    let keys: Vec<&[u8]> = recipients
+        .iter()
+        .map(|account| account.key.as_ref())
+        .collect();
+    if solana_sha256_hasher::hashv(&keys).to_bytes() != round.recipient_commitment {
+        return Err(ProvenanceError::RecipientSetMismatch.into());
     }
 
     let total = round

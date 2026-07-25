@@ -30,6 +30,7 @@ These are checked on chain and proven by the negative cases in
 | No value is created | payouts capped at deposits taken in | `authorize_payouts`, and the round account holding exactly rent afterwards |
 | The set cannot be diluted after the fact | deposits refused once settlement starts | `RoundSettling` |
 | Only the coordinator may settle | settler must equal the round's authority | scenario 4, error `0xe` |
+| The coordinator cannot choose where the money goes | recipient set committed before the first deposit | scenario 5, error `0xf` |
 
 The design rule throughout is **fail closed**. A round that cannot deliver the
 anonymity it advertised aborts. It never settles with a quietly weaker guarantee,
@@ -61,20 +62,26 @@ further back in the graph. `AncestorJaccard` measures the residual at **0.608**
 for 8-payout rounds, falling to **0.500** at 64. Wider rounds dilute the shared
 ancestor among more candidates.
 
-### Settlement delivery — trusted, and it did not used to be
+### Settlement delivery — closed, after two attempts
 
-The round's authority names the recipients at settlement. It cannot forge the
-anonymity set, settle early, or move more than the round holds — all of those
-are enforced. It *can* pay the wrong people.
+The round's authority coordinates settlement but chooses nothing. The recipient
+set is committed as a hash before the first deposit is accepted, and settlement
+recomputes that hash over the accounts presented. A depositor can check the
+commitment against the list it was promised before paying in, rather than hoping
+afterwards.
 
-This is the same class of assumption already made of relayers, and it is the
-weaker half of this design. Committing to a hash of the recipient set when the
-round opens would remove it entirely; that is future work, not a claim.
+This took two rounds of fixing, and both are recorded in [`PROOF.md`](PROOF.md)
+rather than quietly amended. Settlement originally checked only that its caller
+had *signed*, so any stranger could drain a funded round — demonstrated on
+devnet. Requiring the authority closed that and left a worse hole: the authority
+itself could settle to its own addresses, which would have made this pool
+custodial in exactly the way it criticises working mainnet pools for being. The
+commitment closes both.
 
-It is documented here because an audit of this repository found it was worse
-than trusted: settlement originally checked only that its caller had signed, so
-*any* stranger could drain a funded round. That was demonstrated on devnet
-before being fixed, and both transactions are in [`PROOF.md`](PROOF.md).
+What remains: the authority still decides *whether* to settle. It cannot
+misdirect the funds, but it can decline to act, stranding deposits in the round.
+There is no timeout or refund path, and that is a real gap rather than a
+deliberate choice.
 
 ### Sybil funders — open, not addressed
 
@@ -138,10 +145,9 @@ to farm airdrops or manufacture volume.
 Two things are worth stating plainly. First, this design deliberately does
 **not** mix value: denominations are uniform and conserved, and no participant's
 balance changes as a result of another's. The pool holds funds only between
-deposit and settlement, and pays out exactly what it took in. It breaks the
-*linkage* between funder and recipient, not the traceability of funds in
-aggregate. It is not, however, trustless in delivery — see the settlement
-section above.
+deposit and settlement, pays out exactly what it took in, and pays only to a set
+fixed before the first deposit. It breaks the *linkage* between funder and
+recipient, not the traceability of funds in aggregate.
 
 Second, the on-chain record of who deposited into which round is permanent and
 public. Association-set proofs and viewing-key disclosure, as implemented in the
@@ -154,8 +160,8 @@ is not built here.
 
 In rough order of value:
 
-1. **A recipient-set commitment at open time**, removing the authority's ability
-   to misdeliver. The largest remaining trust assumption.
+1. **A refund path**, so deposits are recoverable if the authority never
+   settles. The largest remaining gap.
 2. **A cost on entry**, to price sybil funders.
 3. **Deposit-count normalisation**: require every funder in a round to deposit
    the same number of times, closing the multiplicity channel by construction
