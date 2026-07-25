@@ -177,10 +177,10 @@ scope entirely and equally invisible. Full treatment in
 ```
 $ cargo test --workspace
 provenance-core        9 passed
-provenance-eval       50 passed
+provenance-eval       56 passed
 provenance-program    16 passed
 provenance-mainnet    12 passed
-                      -- 87 total, 0 failed
+                      -- 93 total, 0 failed
 $ cargo clippy --workspace --all-targets -- -D warnings
 clean, with pedantic lints enabled workspace-wide
 ```
@@ -203,6 +203,8 @@ Tests that encode the honest limits rather than the happy path:
   measure must not claim certainty it does not have
 - `unseen_wallets_do_not_dilute_a_linkable_verdict` — an unread history must not
   read as privacy
+- `rank_sum_agrees_with_the_definition_including_ties` — 400 randomised cases
+  holding the linear AUC implementation to the quadratic definition
 
 ## 5. Two bugs the live run caught that unit tests could not
 
